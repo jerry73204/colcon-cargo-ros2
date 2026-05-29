@@ -401,12 +401,19 @@ class TestCollectBindingDirs:
 class TestWriteCargoConfigs:
     """Integration-style tests using real filesystem layout."""
 
-    def _setup_bindings(self, tmp_path, packages):
+    def _setup_bindings(self, tmp_path, packages, dependency_map=None):
         """Create fake binding directories under build/."""
+        dependency_map = dependency_map or {}
         for pkg in packages:
             d = tmp_path / "build" / pkg / "rosidl_cargo" / pkg
             d.mkdir(parents=True)
-            (d / "Cargo.toml").write_text(f'[package]\nname = "{pkg}"\n')
+            content = f'[package]\nname = "{pkg}"\n'
+            dependencies = dependency_map.get(pkg, [])
+            if dependencies:
+                content += "\n[dependencies]\n"
+                for dep in dependencies:
+                    content += f'{dep} = "*"\n'
+            (d / "Cargo.toml").write_text(content)
 
     def test_standalone_crate(self, tmp_path):
         """A standalone crate gets .cargo/config.toml next to its Cargo.toml."""
@@ -414,7 +421,11 @@ class TestWriteCargoConfigs:
 
         # Create crate
         crate = tmp_path / "src" / "my_robot"
-        _make_cargo_toml(crate / "Cargo.toml", workspace=True)
+        _make_cargo_toml(
+            crate / "Cargo.toml",
+            workspace=True,
+            extra='[dependencies]\nstd_msgs = "*"',
+        )
         _make_package_xml(crate / "package.xml", "my_robot")
 
         # Create bindings
@@ -446,7 +457,7 @@ class TestWriteCargoConfigs:
             assert "# BEGIN colcon-cargo-ros2 generated patches" in content
             assert "# END colcon-cargo-ros2" in content
             assert "std_msgs" in content
-            assert "geometry_msgs" in content
+            assert "geometry_msgs" not in content
 
             # Verify [build] section with rustflags is present
             assert "[build]" in content
@@ -467,7 +478,11 @@ class TestWriteCargoConfigs:
         gen = _make_generator(tmp_path)
 
         crate = tmp_path / "src" / "my_robot"
-        _make_cargo_toml(crate / "Cargo.toml", workspace=True)
+        _make_cargo_toml(
+            crate / "Cargo.toml",
+            workspace=True,
+            extra='[dependencies]\nstd_msgs = "*"',
+        )
         _make_package_xml(crate / "package.xml", "my_robot")
 
         # Pre-existing user config
@@ -502,7 +517,11 @@ class TestWriteCargoConfigs:
         gen = _make_generator(tmp_path)
 
         crate = tmp_path / "src" / "my_robot"
-        _make_cargo_toml(crate / "Cargo.toml", workspace=True)
+        _make_cargo_toml(
+            crate / "Cargo.toml",
+            workspace=True,
+            extra='[dependencies]\nstd_msgs = "*"',
+        )
         _make_package_xml(crate / "package.xml", "my_robot")
 
         self._setup_bindings(tmp_path, ["std_msgs"])
@@ -533,11 +552,19 @@ class TestWriteCargoConfigs:
 
         # Cargo workspace root
         ws = tmp_path / "src" / "my_robot"
-        _make_cargo_toml(ws / "Cargo.toml", workspace=True, extra='members = ["core", "nav"]')
+        _make_cargo_toml(
+            ws / "Cargo.toml",
+            workspace=True,
+            extra='members = ["core", "nav"]\n\n[workspace.dependencies]\nstd_msgs = "*"',
+        )
 
         # Two member crates
         core = ws / "core"
-        _make_cargo_toml(core / "Cargo.toml", workspace=False)
+        _make_cargo_toml(
+            core / "Cargo.toml",
+            workspace=False,
+            extra='[dependencies]\nstd_msgs = { workspace = true }',
+        )
         _make_package_xml(core / "package.xml", "core")
 
         nav = ws / "nav"
@@ -563,6 +590,124 @@ class TestWriteCargoConfigs:
             assert (ws / ".cargo" / "config.toml").exists()
             assert not (core / ".cargo" / "config.toml").exists()
             assert not (nav / ".cargo" / "config.toml").exists()
+        finally:
+            RustBindingAugmentation._cargo_descriptors = {}
+
+    def test_filters_unused_generated_patches(self, tmp_path):
+        """Generated bindings absent from Cargo manifests are not patched."""
+        gen = _make_generator(tmp_path)
+
+        crate = tmp_path / "src" / "my_robot"
+        _make_cargo_toml(
+            crate / "Cargo.toml",
+            workspace=True,
+            extra='[dependencies]\nstd_msgs = "*"',
+        )
+        _make_package_xml(crate / "package.xml", "my_robot")
+
+        self._setup_bindings(tmp_path, ["std_msgs", "geometry_msgs", "action_msgs"])
+
+        from unittest.mock import MagicMock
+
+        from colcon_cargo_ros2.package_augmentation import RustBindingAugmentation
+
+        desc = MagicMock()
+        desc.path = str(crate)
+        RustBindingAugmentation._cargo_descriptors = {"my_robot": desc}
+
+        try:
+            gen._write_cargo_configs(
+                {
+                    "std_msgs": Path("/opt/ros/jazzy/share/std_msgs"),
+                    "geometry_msgs": Path("/opt/ros/jazzy/share/geometry_msgs"),
+                    "action_msgs": Path("/opt/ros/jazzy/share/action_msgs"),
+                }
+            )
+
+            content = (crate / ".cargo" / "config.toml").read_text()
+            assert "std_msgs" in content
+            assert "geometry_msgs" not in content
+            assert "action_msgs" not in content
+        finally:
+            RustBindingAugmentation._cargo_descriptors = {}
+
+    def test_includes_transitive_generated_binding_dependencies(self, tmp_path):
+        """A selected generated binding pulls in generated deps it references."""
+        gen = _make_generator(tmp_path)
+
+        crate = tmp_path / "src" / "my_robot"
+        _make_cargo_toml(
+            crate / "Cargo.toml",
+            workspace=True,
+            extra='[dependencies]\nstd_msgs = "*"',
+        )
+        _make_package_xml(crate / "package.xml", "my_robot")
+
+        self._setup_bindings(
+            tmp_path,
+            ["std_msgs", "builtin_interfaces", "action_msgs"],
+            dependency_map={"std_msgs": ["builtin_interfaces"]},
+        )
+
+        from unittest.mock import MagicMock
+
+        from colcon_cargo_ros2.package_augmentation import RustBindingAugmentation
+
+        desc = MagicMock()
+        desc.path = str(crate)
+        RustBindingAugmentation._cargo_descriptors = {"my_robot": desc}
+
+        try:
+            gen._write_cargo_configs(
+                {
+                    "std_msgs": Path("/opt/ros/jazzy/share/std_msgs"),
+                    "builtin_interfaces": Path("/opt/ros/jazzy/share/builtin_interfaces"),
+                    "action_msgs": Path("/opt/ros/jazzy/share/action_msgs"),
+                }
+            )
+
+            content = (crate / ".cargo" / "config.toml").read_text()
+            assert "std_msgs" in content
+            assert "builtin_interfaces" in content
+            assert "action_msgs" not in content
+        finally:
+            RustBindingAugmentation._cargo_descriptors = {}
+
+    def test_empty_filter_rewrites_stale_generated_patches(self, tmp_path):
+        """No matching bindings still rewrites markers and removes stale entries."""
+        gen = _make_generator(tmp_path)
+
+        crate = tmp_path / "src" / "my_robot"
+        _make_cargo_toml(crate / "Cargo.toml", workspace=True)
+        _make_package_xml(crate / "package.xml", "my_robot")
+
+        cargo_dir = crate / ".cargo"
+        cargo_dir.mkdir(parents=True)
+        stale_block = WorkspaceBindingGenerator._generate_marker_block(
+            ['std_msgs = { path = "old" }']
+        )
+        (cargo_dir / "config.toml").write_text(
+            f"[patch.crates-io]\n{stale_block}\n"
+        )
+
+        self._setup_bindings(tmp_path, ["std_msgs"])
+
+        from unittest.mock import MagicMock
+
+        from colcon_cargo_ros2.package_augmentation import RustBindingAugmentation
+
+        desc = MagicMock()
+        desc.path = str(crate)
+        RustBindingAugmentation._cargo_descriptors = {"my_robot": desc}
+
+        try:
+            gen._write_cargo_configs({"std_msgs": Path("/opt/ros/jazzy/share/std_msgs")})
+
+            content = (cargo_dir / "config.toml").read_text()
+            assert "old" not in content
+            assert 'std_msgs = { path =' not in content
+            assert "# BEGIN colcon-cargo-ros2 generated patches" in content
+            assert "# END colcon-cargo-ros2" in content
         finally:
             RustBindingAugmentation._cargo_descriptors = {}
 

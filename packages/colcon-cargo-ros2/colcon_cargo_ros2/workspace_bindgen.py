@@ -14,10 +14,11 @@ Architecture:
 """
 
 import fcntl
+import glob
 import os
 import re
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from colcon_core.logging import colcon_logger
 
@@ -27,14 +28,10 @@ from colcon_cargo_ros2 import cargo_ros2_py
 logger = colcon_logger.getChild(__name__)
 
 
-def _cargo_toml_has_workspace(cargo_toml_path: Path) -> bool:
-    """Check whether a Cargo.toml contains a ``[workspace]`` section.
-
-    Uses simple TOML parsing (tomllib/tomli) to avoid false positives from
-    string matching in comments or values.
-    """
+def _load_toml_file(cargo_toml_path: Path) -> Optional[dict]:
+    """Load a TOML file, returning ``None`` if it cannot be parsed."""
     if not cargo_toml_path.exists():
-        return False
+        return None
     try:
         try:
             import tomllib
@@ -42,10 +39,51 @@ def _cargo_toml_has_workspace(cargo_toml_path: Path) -> bool:
             import tomli as tomllib  # type: ignore[no-redef]
 
         with open(cargo_toml_path, "rb") as f:
-            data = tomllib.load(f)
-        return "workspace" in data
+            return tomllib.load(f)
     except Exception:
-        return False
+        return None
+
+
+def _cargo_toml_has_workspace(cargo_toml_path: Path) -> bool:
+    """Check whether a Cargo.toml contains a ``[workspace]`` section.
+
+    Uses simple TOML parsing (tomllib/tomli) to avoid false positives from
+    string matching in comments or values.
+    """
+    data = _load_toml_file(cargo_toml_path)
+    return bool(data and "workspace" in data)
+
+
+def _collect_dependency_names_from_section(section: object) -> Set[str]:
+    """Collect crate package names referenced by a Cargo dependency section."""
+    names: Set[str] = set()
+    if not isinstance(section, dict):
+        return names
+
+    for dep_name, dep_value in section.items():
+        names.add(dep_name)
+        if isinstance(dep_value, dict):
+            package_name = dep_value.get("package")
+            if isinstance(package_name, str):
+                names.add(package_name)
+    return names
+
+
+def _collect_dependency_names_from_manifest(cargo_data: dict) -> Set[str]:
+    """Collect dependency package names from the manifest sections Cargo resolves."""
+    dependency_names: Set[str] = set()
+    for section_name in ("dependencies", "build-dependencies", "dev-dependencies"):
+        dependency_names.update(
+            _collect_dependency_names_from_section(cargo_data.get(section_name))
+        )
+
+    workspace = cargo_data.get("workspace")
+    if isinstance(workspace, dict):
+        dependency_names.update(
+            _collect_dependency_names_from_section(workspace.get("dependencies"))
+        )
+
+    return dependency_names
 
 
 class WorkspaceBindingGenerator:
@@ -910,6 +948,110 @@ class WorkspaceBindingGenerator:
         content += f"\n[build]\n{build_marker_block}\n"
         return content
 
+    @staticmethod
+    def _cargo_dependency_names(cargo_toml_path: Path) -> Set[str]:
+        """Return dependency crate/package names from a Cargo.toml file."""
+        cargo_data = _load_toml_file(cargo_toml_path)
+        if cargo_data is None:
+            logger.debug(f"Could not parse Cargo.toml dependency names from {cargo_toml_path}")
+            return set()
+
+        return _collect_dependency_names_from_manifest(cargo_data)
+
+    @staticmethod
+    def _workspace_member_manifests(workspace_root: Path) -> List[Path]:
+        """Return Cargo.toml paths for members under a Cargo workspace root."""
+        root_manifest = workspace_root / "Cargo.toml"
+        cargo_data = _load_toml_file(root_manifest)
+        if cargo_data is None:
+            return []
+
+        workspace = cargo_data.get("workspace")
+        if not isinstance(workspace, dict):
+            return []
+
+        members = workspace.get("members", [])
+        if not isinstance(members, list):
+            return []
+
+        excludes = workspace.get("exclude", [])
+        if not isinstance(excludes, list):
+            excludes = []
+
+        excluded_paths = set()
+        for pattern in excludes:
+            if not isinstance(pattern, str):
+                continue
+            for excluded in glob.glob(str(workspace_root / pattern)):
+                excluded_paths.add(Path(excluded).resolve())
+
+        manifests: List[Path] = []
+        seen: Set[Path] = set()
+        for pattern in members:
+            if not isinstance(pattern, str):
+                continue
+            for member in glob.glob(str(workspace_root / pattern)):
+                member_path = Path(member).resolve()
+                if member_path in excluded_paths:
+                    continue
+                manifest = member_path / "Cargo.toml"
+                if manifest.exists() and manifest not in seen:
+                    manifests.append(manifest)
+                    seen.add(manifest)
+
+        return manifests
+
+    def _cargo_dependency_names_for_target(
+        self, config_target: Path, crate_paths: List[Path]
+    ) -> Set[str]:
+        """Return dependency names used by the target Cargo workspace/crates."""
+        manifests = [config_target / "Cargo.toml"]
+        manifests.extend(self._workspace_member_manifests(config_target))
+        manifests.extend(crate_path / "Cargo.toml" for crate_path in crate_paths)
+
+        dependency_names: Set[str] = set()
+        seen: Set[Path] = set()
+        for manifest in manifests:
+            manifest = manifest.resolve()
+            if manifest in seen:
+                continue
+            seen.add(manifest)
+            dependency_names.update(self._cargo_dependency_names(manifest))
+
+        return dependency_names
+
+    def _expand_generated_binding_dependencies(
+        self, direct_names: Set[str], binding_dirs: Dict[str, Path]
+    ) -> Set[str]:
+        """Include generated binding crates required by selected bindings."""
+        selected = set(direct_names)
+        queue = list(direct_names)
+        generated_names = set(binding_dirs.keys())
+
+        while queue:
+            pkg_name = queue.pop()
+            cargo_toml = binding_dirs[pkg_name] / "Cargo.toml"
+            for dep_name in self._cargo_dependency_names(cargo_toml) & generated_names:
+                if dep_name not in selected:
+                    selected.add(dep_name)
+                    queue.append(dep_name)
+
+        return selected
+
+    def _filter_binding_dirs_for_target(
+        self,
+        config_target: Path,
+        crate_paths: List[Path],
+        binding_dirs: Dict[str, Path],
+    ) -> Dict[str, Path]:
+        """Keep generated binding crates referenced by this target Cargo graph."""
+        generated_names = set(binding_dirs.keys())
+        direct_names = (
+            self._cargo_dependency_names_for_target(config_target, crate_paths) & generated_names
+        )
+        selected_names = self._expand_generated_binding_dependencies(direct_names, binding_dirs)
+        return {name: binding_dirs[name] for name in sorted(selected_names)}
+
     def _write_cargo_configs(self, ros_packages: Dict[str, Path]):
         """Generate ``.cargo/config.toml`` for each Cargo workspace / standalone crate.
 
@@ -929,9 +1071,10 @@ class WorkspaceBindingGenerator:
         generated_count = 0
 
         for config_target, crate_paths in targets.items():
-            patches = self._compute_relative_patches(config_target, binding_dirs)
-            if not patches:
-                continue
+            target_binding_dirs = self._filter_binding_dirs_for_target(
+                config_target, crate_paths, binding_dirs
+            )
+            patches = self._compute_relative_patches(config_target, target_binding_dirs)
 
             patch_marker_block = self._generate_marker_block(patches)
             build_marker_block = self._generate_build_marker_block(rustflags)

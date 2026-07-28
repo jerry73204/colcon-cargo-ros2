@@ -14,8 +14,10 @@ Architecture:
 """
 
 import fcntl
+import hashlib
 import os
 import re
+import shutil
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -25,6 +27,14 @@ from colcon_core.logging import colcon_logger
 from colcon_cargo_ros2 import cargo_ros2_py
 
 logger = colcon_logger.getChild(__name__)
+
+# Written beside each package's generated bindings; records a digest of the
+# interface definitions they were generated from, so a later build can tell
+# "already generated" from "still current".
+STAMP_FILENAME = ".bindgen_stamp"
+
+# Interface definition suffixes whose content affects the generated crate.
+INTERFACE_SUFFIXES = (".msg", ".srv", ".action", ".idl")
 
 
 def _cargo_toml_has_workspace(cargo_toml_path: Path) -> bool:
@@ -501,13 +511,28 @@ class WorkspaceBindingGenerator:
             # Output directory: build/<pkg_name>/rosidl_cargo/
             pkg_build_dir = self.build_base / pkg_name / "rosidl_cargo"
 
-            # Check if bindings already exist and are up-to-date
+            # Reuse existing bindings only when the interface definitions they
+            # were generated from have not changed. Existence alone is not
+            # enough: a package whose .msg gains a field leaves a stale crate
+            # behind, and the build then fails inside CONSUMER code ("no field
+            # `pid` on type `ComponentEvent`") with nothing pointing at the
+            # stale artifact.
             # Generated structure is: build/<pkg_name>/rosidl_cargo/<pkg_name>/Cargo.toml
             binding_dir = pkg_build_dir / pkg_name
+            stamp_file = pkg_build_dir / STAMP_FILENAME
+            stamp = self._interface_stamp(pkg_share)
+
             if binding_dir.exists():
-                # TODO: Add checksum-based cache validation
-                logger.debug(f"Bindings already exist for {pkg_name}")
-                continue
+                if self._stamp_matches(stamp_file, stamp):
+                    logger.debug(f"Bindings up to date for {pkg_name}")
+                    continue
+                # Remove rather than regenerate in place: bindgen does not
+                # delete outputs for interfaces that no longer exist, so a
+                # merged tree can keep a crate referring to a deleted message.
+                logger.info(
+                    f"Interface definitions changed for {pkg_name}; regenerating bindings"
+                )
+                shutil.rmtree(pkg_build_dir, ignore_errors=True)
 
             # Generate bindings using cargo ros2 bindgen
             logger.info(f"Generating bindings for {pkg_name}")
@@ -518,7 +543,53 @@ class WorkspaceBindingGenerator:
                 self._fixup_generated_cargo_toml(pkg_name, binding_dir)
             except RuntimeError as e:
                 # Log warning for packages that can't be generated (e.g., unsupported IDL features)
+                # The stamp is deliberately NOT written, so the next build retries
+                # instead of caching a partial result.
                 logger.warning(f"Skipping {pkg_name}: {e}")
+            else:
+                self._write_stamp(stamp_file, stamp)
+
+    @staticmethod
+    def _interface_stamp(pkg_share: Path) -> str:
+        """Digest of a package's interface definitions.
+
+        Covers path, size and mtime of every .msg/.srv/.action/.idl under the
+        package's share directory. Size+mtime rather than content keeps this
+        cheap on large interface sets, and matches how colcon detects changes
+        elsewhere; the cost of a false "unchanged" is bounded by mtime
+        granularity, whereas the cost of a false "changed" is only a rebuild.
+        """
+        digest = hashlib.sha256()
+        for subdir in ("msg", "srv", "action"):
+            root = pkg_share / subdir
+            if not root.is_dir():
+                continue
+            for path in sorted(root.rglob("*")):
+                if path.suffix not in INTERFACE_SUFFIXES or not path.is_file():
+                    continue
+                stat = path.stat()
+                rel = path.relative_to(pkg_share)
+                digest.update(f"{rel}:{stat.st_size}:{stat.st_mtime_ns}\n".encode())
+        return digest.hexdigest()
+
+    @staticmethod
+    def _stamp_matches(stamp_file: Path, expected: str) -> bool:
+        """True when a previously written stamp equals `expected`."""
+        try:
+            return stamp_file.read_text().strip() == expected
+        except OSError:
+            # Missing (bindings predate stamping) or unreadable: treat as stale.
+            return False
+
+    @staticmethod
+    def _write_stamp(stamp_file: Path, stamp: str):
+        """Record the stamp, after generation has fully succeeded."""
+        try:
+            stamp_file.parent.mkdir(parents=True, exist_ok=True)
+            stamp_file.write_text(stamp + "\n")
+        except OSError as e:
+            # Not fatal: the only consequence is regenerating next time.
+            logger.warning(f"Could not write {stamp_file}: {e}")
 
     def _run_bindgen(self, pkg_name: str, pkg_share: Path, output_dir: Path, verbose: bool):
         """Generate Rust bindings for a single package using direct API call.
@@ -703,6 +774,35 @@ class WorkspaceBindingGenerator:
                 binding_dirs[pkg_name] = pkg_build_dir
 
         return binding_dirs
+
+    @staticmethod
+    def _assert_no_missing_bindings(
+        ros_packages: Dict[str, Path], binding_dirs: Dict[str, Path]
+    ):
+        """Fail when a required interface package has no generated bindings.
+
+        Without this, a package that failed to generate simply gets no
+        ``[patch.crates-io]`` entry, cargo resolves it against the real
+        registry instead, and the build dies somewhere unrelated -- e.g.
+        ``failed to select a version for the requirement `lifecycle_msgs = "*"`
+        ... version 1.2.1 is yanked``. That error names crates.io, not the
+        package whose bindings are missing, so the real cause (a bindgen
+        failure, or a stale lock suppressing generation entirely) stays hidden.
+
+        Raises:
+            RuntimeError: naming every package that is missing bindings.
+        """
+        missing = sorted(set(ros_packages) - set(binding_dirs))
+        if not missing:
+            return
+        raise RuntimeError(
+            "No Rust bindings were generated for: "
+            + ", ".join(missing)
+            + ".\nThese interface packages are required by this workspace, so cargo "
+            "would fall back to crates.io and fail with an unrelated version or "
+            "'yanked' error. Check the bindgen warnings above for the underlying "
+            "failure, then re-run the build."
+        )
 
     @staticmethod
     def _compute_relative_patches(config_target: Path, binding_dirs: Dict[str, Path]) -> List[str]:
@@ -918,6 +1018,7 @@ class WorkspaceBindingGenerator:
         used by both ``cargo build`` and IDEs.
         """
         binding_dirs = self._collect_binding_dirs(ros_packages)
+        self._assert_no_missing_bindings(ros_packages, binding_dirs)
         if not binding_dirs:
             return
 

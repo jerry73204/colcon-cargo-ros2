@@ -19,7 +19,7 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 from colcon_core.logging import colcon_logger
 
@@ -76,6 +76,16 @@ class WorkspaceBindingGenerator:
         self.args = args
         self.lock_file = build_base / ".colcon" / "bindgen.lock"
         self._lock_fd = None
+
+        # package name -> its direct package.xml dependencies, accumulated as
+        # dependencies are walked. Lets a single traversal answer "what does
+        # THIS package need" as well as "what does the workspace need".
+        self._dep_graph: Dict[str, Set[str]] = {}
+
+        # colcon Cargo package name -> interface packages it actually needs
+        # (transitively). Empty until _discover_ros_packages() has run; callers
+        # must treat "absent" as "unknown", never as "needs nothing".
+        self._package_interface_deps: Dict[str, Set[str]] = {}
 
     def try_acquire_lock(self) -> bool:
         """Try to acquire the binding generation lock.
@@ -163,13 +173,28 @@ class WorkspaceBindingGenerator:
         # Step 1: Get direct ROS dependencies from Colcon-parsed package.xml
         required_packages = set()
 
+        # Keep the per-package attribution, not just the union. _write_cargo_configs()
+        # needs to know which Cargo target needs which interface package, so that a
+        # crate depending on std_msgs alone does not get patches for the 100+ message
+        # packages some other package in the same colcon workspace happens to need.
+        direct_deps_by_package: Dict[str, Set[str]] = {}
+
         for pkg_name, desc in cargo_descriptors.items():
             # Get build + run dependencies (interface packages needed at compile time)
             # desc.dependencies is populated by Colcon's RosPackageIdentification
             # from package.xml using catkin_pkg
-            deps = desc.get_dependencies(categories=["build", "run"])
-            dep_names = [d.name for d in deps]
+            try:
+                deps = desc.get_dependencies(categories=["build", "run"])
+                dep_names = [d.name for d in deps]
+            except Exception as e:
+                # Leave this package out of the attribution map entirely: absent
+                # means "unknown", which makes _write_cargo_configs() fall back to
+                # patching everything rather than silently patching too little.
+                logger.warning(f"Could not read dependencies for {pkg_name}: {e}")
+                continue
+
             required_packages.update(dep_names)
+            direct_deps_by_package[pkg_name] = set(dep_names)
 
             if dep_names:
                 logger.info(f"{pkg_name} has {len(dep_names)} direct dependencies: {dep_names}")
@@ -208,7 +233,54 @@ class WorkspaceBindingGenerator:
 
         logger.info(f"Final interface packages to generate: {len(interface_packages)}")
 
+        # Step 5: Narrow the per-package attribution to interface packages, using
+        # the dependency edges recorded during the walks above.
+        interface_names = set(interface_packages)
+        attribution = {
+            pkg_name: self._transitive_closure(direct) & interface_names
+            for pkg_name, direct in direct_deps_by_package.items()
+        }
+
+        # Every package being generated should be claimed by at least one Cargo
+        # package, because that is how it entered the required set in the first
+        # place. If something is unclaimed, an edge went unrecorded -- a package
+        # whose package.xml could not be parsed, for instance -- and the per-package
+        # view is then narrower than the truth. Narrowing on an incomplete map could
+        # omit a needed patch, so drop back to patching everything.
+        claimed: Set[str] = set()
+        for deps in attribution.values():
+            claimed |= deps
+
+        unclaimed = interface_names - claimed
+        if unclaimed:
+            logger.warning(
+                "Not attributing bindings per package: "
+                + ", ".join(sorted(unclaimed))
+                + " could not be traced back to a Cargo package. "
+                "Every Cargo target will be patched with every generated binding."
+            )
+            self._package_interface_deps = {}
+        else:
+            self._package_interface_deps = attribution
+
         return interface_packages
+
+    def _transitive_closure(self, seeds: Set[str]) -> Set[str]:
+        """Expand *seeds* over the recorded package.xml dependency edges.
+
+        Uses ``self._dep_graph``, populated while dependencies were being walked,
+        so this costs no additional package.xml parsing. Packages with no recorded
+        edges simply contribute themselves.
+        """
+        reached = set(seeds)
+        queue = list(seeds)
+        while queue:
+            pkg_name = queue.pop()
+            for dep in self._dep_graph.get(pkg_name, ()):
+                if dep not in reached:
+                    reached.add(dep)
+                    queue.append(dep)
+        return reached
 
     def _validate_cargo_dependencies(self, interface_packages: Dict[str, Path]):
         """Validate that Cargo.toml dependencies match package.xml interface packages.
@@ -339,6 +411,11 @@ class WorkspaceBindingGenerator:
                             if d.evaluated_condition:
                                 deps.add(d.name)
 
+                        # Workspace-local packages are not in ament_index yet, so
+                        # _resolve_transitive_dependencies() cannot see their edges.
+                        # Record them here instead.
+                        self._dep_graph[pkg_name] = deps
+
                         if deps:
                             logger.debug(f"{pkg_name} (workspace) added deps: {deps}")
                             workspace_dependencies.update(deps)
@@ -414,6 +491,10 @@ class WorkspaceBindingGenerator:
                 for d in pkg.exec_depends:
                     if d.evaluated_condition:
                         deps.add(d.name)
+
+                # Record the edges so per-package closures can be computed later
+                # without re-walking package.xml files.
+                self._dep_graph[pkg_name] = deps
 
                 # Add new dependencies to the queue
                 new_deps = deps - visited
@@ -529,9 +610,7 @@ class WorkspaceBindingGenerator:
                 # Remove rather than regenerate in place: bindgen does not
                 # delete outputs for interfaces that no longer exist, so a
                 # merged tree can keep a crate referring to a deleted message.
-                logger.info(
-                    f"Interface definitions changed for {pkg_name}; regenerating bindings"
-                )
+                logger.info(f"Interface definitions changed for {pkg_name}; regenerating bindings")
                 shutil.rmtree(pkg_build_dir, ignore_errors=True)
 
             # Generate bindings using cargo ros2 bindgen
@@ -724,17 +803,19 @@ class WorkspaceBindingGenerator:
         # 4. No workspace found — standalone crate
         return crate_path
 
-    def _collect_ide_config_targets(self) -> Dict[Path, List[Path]]:
-        """Collect deduplicated mapping of config targets to crate paths.
+    def _collect_ide_config_targets(self) -> Dict[Path, List[Tuple[str, Path]]]:
+        """Collect deduplicated mapping of config targets to the crates they cover.
 
         Returns:
             Dict mapping each directory that should receive
-            ``.cargo/config.toml`` to the list of ROS Cargo crates it covers.
+            ``.cargo/config.toml`` to a list of ``(package name, crate path)``
+            for the ROS Cargo crates it covers. The name is needed to look up
+            which interface packages that crate actually depends on.
         """
         from colcon_cargo_ros2.package_augmentation import RustBindingAugmentation
 
         cargo_descriptors = getattr(RustBindingAugmentation, "_cargo_descriptors", {})
-        targets: Dict[Path, List[Path]] = {}
+        targets: Dict[Path, List[Tuple[str, Path]]] = {}
 
         for _pkg_name, desc in cargo_descriptors.items():
             crate_path = Path(desc.path).resolve()
@@ -751,7 +832,7 @@ class WorkspaceBindingGenerator:
                 continue
 
             target = self._detect_cargo_workspace_root(crate_path, colcon_ws_root)
-            targets.setdefault(target.resolve(), []).append(crate_path)
+            targets.setdefault(target.resolve(), []).append((_pkg_name, crate_path))
 
         return targets
 
@@ -776,9 +857,7 @@ class WorkspaceBindingGenerator:
         return binding_dirs
 
     @staticmethod
-    def _assert_no_missing_bindings(
-        ros_packages: Dict[str, Path], binding_dirs: Dict[str, Path]
-    ):
+    def _assert_no_missing_bindings(ros_packages: Dict[str, Path], binding_dirs: Dict[str, Path]):
         """Fail when a required interface package has no generated bindings.
 
         Without this, a package that failed to generate simply gets no
@@ -803,6 +882,60 @@ class WorkspaceBindingGenerator:
             "'yanked' error. Check the bindgen warnings above for the underlying "
             "failure, then re-run the build."
         )
+
+    def _select_bindings_for_target(
+        self, crates: List[Tuple[str, Path]], binding_dirs: Dict[str, Path]
+    ) -> Dict[str, Path]:
+        """Pick the bindings a single Cargo workspace / crate actually needs.
+
+        Every Cargo target used to receive a ``[patch.crates-io]`` entry for every
+        interface package anything in the colcon workspace depended on. Cargo warns
+        once per unused patch ("patch `X` was not used in the crate graph"), which
+        on a large workspace buries real diagnostics under a hundred warnings.
+
+        Selection is driven by ``package.xml``, not by parsing the consumer's
+        ``Cargo.toml``. Re-deriving Cargo's own dependency resolution is a losing
+        game: it has to account for ``[target.'cfg(...)'.dependencies]``, workspace
+        members implied by path dependencies rather than listed in ``members``,
+        renamed packages, git and out-of-tree path dependencies, and more. Any gap
+        drops a needed patch, and a dropped patch is not a warning -- cargo silently
+        resolves that name against the real crates.io and fails somewhere unrelated
+        (see _assert_no_missing_bindings). package.xml is this project's declared
+        source of truth for ROS dependencies and cannot have those gaps.
+
+        Over-inclusion is the deliberate failure direction: a package declared in
+        package.xml but unused in Cargo.toml keeps its patch and costs one warning.
+        A package whose attribution is unknown disables narrowing altogether for
+        that target, degrading to the previous patch-everything behaviour.
+        """
+        selected: Set[str] = set()
+
+        for pkg_name, _crate_path in crates:
+            deps = self._package_interface_deps.get(pkg_name)
+            if deps is None:
+                # Unknown, not empty. Narrowing here would risk omitting a patch.
+                logger.debug(
+                    f"No dependency attribution for {pkg_name}; "
+                    "using all bindings for this Cargo target"
+                )
+                return dict(binding_dirs)
+            selected |= deps
+
+        # Invariant: selected comes from the interface packages that were also fed
+        # to binding generation, so the global check has already covered these. Kept
+        # as a guard in case a future change feeds the attribution from elsewhere.
+        missing = sorted(selected - set(binding_dirs))
+        if missing:
+            raise RuntimeError(
+                "No Rust bindings were generated for: "
+                + ", ".join(missing)
+                + ".\nThese interface packages are required by "
+                + ", ".join(sorted(name for name, _ in crates))
+                + ", so cargo would fall back to crates.io and fail with an "
+                "unrelated version or 'yanked' error."
+            )
+
+        return {name: binding_dirs[name] for name in sorted(selected)}
 
     @staticmethod
     def _compute_relative_patches(config_target: Path, binding_dirs: Dict[str, Path]) -> List[str]:
@@ -1029,11 +1162,13 @@ class WorkspaceBindingGenerator:
         rustflags = self._compute_rustflags()
         generated_count = 0
 
-        for config_target, crate_paths in targets.items():
-            patches = self._compute_relative_patches(config_target, binding_dirs)
-            if not patches:
-                continue
+        for config_target, crates in targets.items():
+            target_binding_dirs = self._select_bindings_for_target(crates, binding_dirs)
+            patches = self._compute_relative_patches(config_target, target_binding_dirs)
 
+            # Written even when there are no patches: the [build] rustflags are
+            # still needed for linking, and rewriting the marker block is what
+            # clears patches left over from a previous build.
             patch_marker_block = self._generate_marker_block(patches)
             build_marker_block = self._generate_build_marker_block(rustflags)
 
@@ -1054,7 +1189,7 @@ class WorkspaceBindingGenerator:
             config_file.write_text(new_content)
             generated_count += 1
 
-            crate_names = [p.name for p in crate_paths]
+            crate_names = [crate_path.name for _name, crate_path in crates]
             logger.info(
                 f"Wrote .cargo/config.toml with {len(patches)} patches "
                 f"and {len(rustflags)} rustflags to {config_file} "

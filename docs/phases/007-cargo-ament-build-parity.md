@@ -6,7 +6,7 @@
 
 **Scope**: `packages/cargo-ros2` (installer), `packages/colcon-cargo-ros2` (PyO3 config plumbing + build task).
 
-**Status**: Not started
+**Status**: 7.1, 7.4, 7.5, 7.6 complete. 7.2, 7.3, 7.7 not started.
 
 ---
 
@@ -40,7 +40,7 @@ It also registers the package under `share/ament_index/resource_index/rust_packa
 
 ---
 
-### Subphase 7.1: Replace hand-rolled target discovery with `cargo_metadata`
+### Subphase 7.1: Replace hand-rolled target discovery with `cargo_metadata` — **done**
 
 **Objective**: Derive the list of installable artifacts from `cargo metadata` rather than from a line scan of `Cargo.toml`.
 
@@ -61,13 +61,12 @@ It also registers the package under `share/ament_index/resource_index/rust_packa
 **Correctness notes**:
 
 - Cargo target auto-discovery is done by `cargo metadata` itself, so `src/main.rs` and `src/bin/*.rs` are covered without our own filesystem walk.
-- Cargo replaces `-` with `_` in *library* file names but not in *binary* file names. Bin artifacts use `target.name` verbatim; lib artifacts use `target.name.replace('-', "_")`. The current code's comment at `ament_installer.rs:459` is correct for binaries only.
+- No manual `-` → `_` rewriting is needed. `cargo metadata` already reports the *library* target name underscored (package `my-pkg` → target `my_pkg`, matching `libmy_pkg.so`) while *binary* target names keep their hyphens. Using `target.name` verbatim is correct for both.
+- `Target::kind` is a list, not a scalar: `crate-type = ["cdylib", "rlib"]` reports `["cdylib", "rlib"]` on one target. Any linkable kind makes the target installable.
 
-**Tests**:
-- Fixture crate with `[[bin]]` entries → both installed.
-- Fixture crate with `src/main.rs` only and no `[[bin]]` → binary named after the package installed.
-- Fixture crate with `src/bin/a.rs` and `src/bin/b.rs` → both installed (currently fails).
-- Fixture crate with a hyphenated package name → binary keeps the hyphen, library gets an underscore.
+**Implemented as**: `InstallTarget`, `InstallTargetKind`, `InstallTarget::from_kinds()`, `install_targets_from_package()`, and `install_targets_for_project()` in `ament_installer.rs`. `extract_binary_names()`, `extract_toml_string_value()` and `is_library_package()` deleted; `install()` no longer takes an `is_library` flag.
+
+**Tests**: unit tests for `from_kinds()` kind mapping, plus `tests/test_install_targets.rs` running real `cargo metadata` over fixture crates (auto-discovered `src/bin/*.rs`, implicit `src/main.rs`, underscored lib name, `required-features` passthrough, and rlib/build-script/test targets producing nothing).
 
 ---
 
@@ -115,7 +114,7 @@ It also registers the package under `share/ament_index/resource_index/rust_packa
 
 ---
 
-### Subphase 7.4: Install library artifacts
+### Subphase 7.4: Install library artifacts — **done**
 
 **Objective**: Install `cdylib`/`staticlib`/`dylib` outputs to `install/<pkg>/lib/<pkg>/`, matching the reference.
 
@@ -124,27 +123,26 @@ It also registers the package under `share/ament_index/resource_index/rust_packa
 - For each library target from 7.1, probe the prefix/suffix combinations in the reference's order and copy every file that exists:
   `("lib","so")`, `("lib","dylib")`, `("lib","a")`, `("","dll")`, `("","lib")`.
 - Probe by file existence rather than by mapping kind → extension. That is what the reference does, it is platform-agnostic, and it tolerates a crate declaring multiple `crate-type` values.
-- The file stem is `target.name.replace('-', "_")`.
-- Consequence for `install()` (`ament_installer.rs:69`): library-only packages must no longer skip artifact installation. Replace the `if !is_library` guard with an unconditional call — the target list is now the thing that decides what gets copied.
+- The file stem is `target.name` as reported by Cargo (already underscored — see 7.1).
+- Consequence for `install()`: library-only packages must no longer skip artifact installation. The `if !is_library` guard is gone — the target list is now the thing that decides what gets copied.
 
-**Tests**:
-- Fixture producing a `cdylib` → `lib<name>.so` installed on Linux.
-- Fixture with all five artifact shapes present in the build dir → all five installed (mirrors `test_install_binaries_lib_variants`).
-- Pure `rlib` library → nothing installed under `lib/<pkg>/`, `install()` still succeeds.
+**Implemented as**: `LIBRARY_NAME_PATTERNS` plus `install_library()`; `install_binaries()` became `install_artifacts()`, dispatching per target kind to `install_executable()` or `install_library()`.
+
+**Tests**: all five artifact shapes installed from one build dir; a library-only package installs its `cdylib` through the full `install()` path; missing artifacts are skipped without error.
 
 ---
 
-### Subphase 7.5: Windows executable suffix
+### Subphase 7.5: Windows executable suffix — **done**
 
 **Objective**: Append `.exe` to binary source and destination paths on Windows.
 
-**Design**: `#[cfg(target_os = "windows")]` on both the `src` and `dest` path construction in `install_binaries()`, exactly as the reference does. Library artifacts need no suffix handling — `dll`/`lib` are already in the probe table from 7.4.
+**Design**: A `bin_file_name()` helper returns `<name>.exe` under `cfg!(windows)` and `<name>` elsewhere, applied to both the source and destination path. Library artifacts need no suffix handling — `dll`/`lib` are already in the probe table from 7.4.
 
-**Tests**: Guard the assertion with `cfg!(windows)` in the existing installer tests; CI already builds wheels for Windows, so a wheel smoke test covers the real path.
+**Tests**: `bin_file_name_adds_exe_suffix_on_windows` asserts both branches via `cfg!(windows)`, so it is meaningful on either platform. CI already builds wheels for Windows.
 
 ---
 
-### Subphase 7.6: `rust_packages` ament resource marker
+### Subphase 7.6: `rust_packages` ament resource marker — **done**
 
 **Objective**: Register installed Rust packages under `share/ament_index/resource_index/rust_packages/<pkg>` in addition to the existing `packages` and `package_type` markers.
 
@@ -181,15 +179,16 @@ Removing `is_library_package()` changes a public function in `packages/cargo-ros
 
 ### Exit criteria
 
-- [ ] `src/bin/*.rs` binaries install without an explicit `[[bin]]` section
-- [ ] `required-features`-gated binaries install iff their features were enabled
-- [ ] `--target <triple>` builds install from `build_base/<triple>/<profile>`
-- [ ] `cdylib`/`staticlib` artifacts install to `lib/<pkg>/`
-- [ ] Windows binaries install with `.exe`
-- [ ] `resource_index/rust_packages/<pkg>` marker written
-- [ ] Missing `cargo` produces an actionable error before the build starts
-- [ ] `just quality` clean: nightly rustfmt, zero clippy warnings, all tests pass
-- [ ] `testing_workspaces/complex_workspace` and `testing_workspaces/my_robot_node` build and run after `just clean && just build`
+- [x] `src/bin/*.rs` binaries install without an explicit `[[bin]]` section
+- [ ] `required-features`-gated binaries install iff their features were enabled *(7.2)*
+- [ ] `--target <triple>` builds install from `build_base/<triple>/<profile>` *(7.3)*
+- [x] `cdylib`/`staticlib` artifacts install to `lib/<pkg>/`
+- [x] Windows binaries install with `.exe`
+- [x] `resource_index/rust_packages/<pkg>` marker written
+- [ ] Missing `cargo` produces an actionable error before the build starts *(7.7)*
+- [x] nightly rustfmt clean, zero clippy warnings, all Rust + Python tests pass
+- [x] `testing_workspaces/my_robot_node` builds and runs after `just clean && just build`
+- [ ] `testing_workspaces/complex_workspace` builds — blocked on `moveit_msgs` not being installed locally, needs `just install-deps`
 
 ---
 

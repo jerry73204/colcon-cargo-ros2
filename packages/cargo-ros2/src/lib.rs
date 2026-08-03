@@ -167,7 +167,7 @@ pub fn generate_bindings(config: BindgenConfig) -> Result<()> {
 /// # Ok::<(), eyre::Report>(())
 /// ```
 pub fn install_to_ament(config: InstallConfig) -> Result<()> {
-    use crate::ament_installer::{AmentInstaller, is_library_package};
+    use crate::ament_installer::{AmentInstaller, install_targets_from_package};
     use cargo_metadata::MetadataCommand;
     use std::env;
 
@@ -194,8 +194,10 @@ pub fn install_to_ament(config: InstallConfig) -> Result<()> {
     // Get target directory from metadata (handles workspace builds correctly)
     let target_dir = metadata.target_directory.clone().into_std_path_buf();
 
-    // Check if this is a library-only package
-    let is_lib_only = is_library_package(&config.project_root)?;
+    // Collect the targets that produce installable artifacts. Cargo has
+    // already done target auto-discovery for us, so implicit src/main.rs and
+    // src/bin/*.rs binaries are included.
+    let targets = install_targets_from_package(root_package);
 
     // Create installer
     let installer = AmentInstaller::new(
@@ -205,10 +207,11 @@ pub fn install_to_ament(config: InstallConfig) -> Result<()> {
         target_dir,
         config.verbose,
         config.profile.clone(),
+        targets,
     );
 
     // Run installation
-    let result = installer.install(is_lib_only);
+    let result = installer.install();
 
     // Restore original directory
     env::set_current_dir(original_dir)?;

@@ -8,6 +8,109 @@ use eyre::{Result, WrapErr};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// File name prefix/suffix pairs Cargo may use for a library artifact.
+///
+/// See <https://doc.rust-lang.org/reference/linkage.html> for the mapping from
+/// crate type to file name.
+const LIBRARY_NAME_PATTERNS: [(&str, &str); 5] = [
+    ("lib", "so"),
+    ("lib", "dylib"),
+    ("lib", "a"),
+    ("", "dll"),
+    ("", "lib"),
+];
+
+/// The kind of artifact a Cargo target produces, restricted to the kinds that
+/// are worth copying into the ament install space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallTargetKind {
+    /// An executable, installed to `lib/<pkg>/<name>`
+    Bin,
+    /// A linkable library (`cdylib`, `staticlib`, `dylib`), installed to `lib/<pkg>/`
+    Lib,
+}
+
+/// A Cargo target that produces an installable artifact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallTarget {
+    /// Target name as Cargo reports it. Binary names keep hyphens; library
+    /// names already have hyphens replaced with underscores.
+    pub name: String,
+    /// What kind of artifact this target produces
+    pub kind: InstallTargetKind,
+    /// Features that must all be enabled for this target to be built
+    pub required_features: Vec<String>,
+}
+
+impl InstallTarget {
+    /// Build an [`InstallTarget`] from a Cargo target's `kind` list.
+    ///
+    /// Returns `None` for kinds that produce no installable file: `lib`/`rlib`
+    /// (consumed only by Cargo itself), build scripts, tests, benches,
+    /// examples and proc macros.
+    ///
+    /// A single target may report several kinds — `crate-type = ["cdylib",
+    /// "rlib"]` reports both — so any linkable kind makes the whole target
+    /// installable.
+    pub fn from_kinds(name: &str, kinds: &[String], required_features: &[String]) -> Option<Self> {
+        let kind = if kinds.iter().any(|k| k == "bin") {
+            InstallTargetKind::Bin
+        } else if kinds
+            .iter()
+            .any(|k| matches!(k.as_str(), "cdylib" | "staticlib" | "dylib"))
+        {
+            InstallTargetKind::Lib
+        } else {
+            return None;
+        };
+
+        Some(Self {
+            name: name.to_string(),
+            kind,
+            required_features: required_features.to_vec(),
+        })
+    }
+}
+
+/// The on-disk file name Cargo gives an executable target.
+pub fn bin_file_name(target_name: &str) -> String {
+    if cfg!(windows) {
+        format!("{target_name}.exe")
+    } else {
+        target_name.to_string()
+    }
+}
+
+/// Collect the installable targets of a Cargo package.
+pub fn install_targets_from_package(package: &cargo_metadata::Package) -> Vec<InstallTarget> {
+    package
+        .targets
+        .iter()
+        .filter_map(|target| {
+            InstallTarget::from_kinds(&target.name, &target.kind, &target.required_features)
+        })
+        .collect()
+}
+
+/// Collect the installable targets of the package rooted at `project_root`.
+///
+/// This runs `cargo metadata`, which performs Cargo's own target
+/// auto-discovery, so implicit `src/main.rs` and `src/bin/*.rs` binaries are
+/// found without an explicit `[[bin]]` section.
+pub fn install_targets_for_project(project_root: &Path) -> Result<Vec<InstallTarget>> {
+    let metadata = cargo_metadata::MetadataCommand::new()
+        .manifest_path(project_root.join("Cargo.toml"))
+        .no_deps()
+        .exec()
+        .wrap_err("Failed to read Cargo metadata")?;
+
+    let root_package = metadata
+        .root_package()
+        .ok_or_else(|| eyre::eyre!("No root package found in Cargo.toml"))?;
+
+    Ok(install_targets_from_package(root_package))
+}
+
 /// Ament installer for creating ament-compatible installations
 pub struct AmentInstaller {
     /// Install base directory (e.g., install/package_name)
@@ -22,6 +125,8 @@ pub struct AmentInstaller {
     verbose: bool,
     /// Build profile (debug or release)
     profile: String,
+    /// Targets whose artifacts should be installed
+    targets: Vec<InstallTarget>,
 }
 
 impl AmentInstaller {
@@ -33,6 +138,7 @@ impl AmentInstaller {
         target_dir: PathBuf,
         verbose: bool,
         profile: String,
+        targets: Vec<InstallTarget>,
     ) -> Self {
         Self {
             install_base,
@@ -41,11 +147,12 @@ impl AmentInstaller {
             target_dir,
             verbose,
             profile,
+            targets,
         }
     }
 
     /// Run the complete installation process
-    pub fn install(&self, is_library: bool) -> Result<()> {
+    pub fn install(&self) -> Result<()> {
         if self.verbose {
             eprintln!(
                 "Installing {} to {}",
@@ -66,10 +173,8 @@ impl AmentInstaller {
         // Install source files
         self.install_source_files()?;
 
-        // Install binaries (if not a pure library)
-        if !is_library {
-            self.install_binaries()?;
-        }
+        // Install binaries and libraries
+        self.install_artifacts()?;
 
         // Install metadata
         self.install_metadata()?;
@@ -134,6 +239,25 @@ impl AmentInstaller {
             eprintln!(
                 "  Created package type marker: {}",
                 package_type_file.display()
+            );
+        }
+
+        // Create the rust_packages marker. We do not consume it ourselves, but
+        // colcon-ros-cargo scans this index to discover installed Rust crates,
+        // so writing it keeps our install space usable from the official stack.
+        let rust_package_file = self
+            .ament_index_dir()
+            .join("resource_index")
+            .join("rust_packages")
+            .join(&self.package_name);
+
+        fs::create_dir_all(rust_package_file.parent().unwrap())?;
+        fs::write(&rust_package_file, "")?;
+
+        if self.verbose {
+            eprintln!(
+                "  Created rust package marker: {}",
+                rust_package_file.display()
             );
         }
 
@@ -259,52 +383,98 @@ impl AmentInstaller {
         Ok(())
     }
 
-    /// Install binaries to lib directory
-    fn install_binaries(&self) -> Result<()> {
-        let target_dir = self.target_dir.join(&self.profile);
-        let cargo_toml_path = self.project_root.join("Cargo.toml");
-
-        // Parse Cargo.toml to find binary names
-        let cargo_toml =
-            fs::read_to_string(&cargo_toml_path).wrap_err("Failed to read Cargo.toml")?;
-
-        let binaries = self.extract_binary_names(&cargo_toml);
-
-        if binaries.is_empty() {
+    /// Install binaries and libraries to `lib/<pkg>/`
+    ///
+    /// Artifacts that are absent from the build directory are skipped rather
+    /// than treated as an error: a target whose `required-features` were not
+    /// enabled is never built in the first place.
+    fn install_artifacts(&self) -> Result<()> {
+        if self.targets.is_empty() {
             if self.verbose {
-                eprintln!("  No binaries to install (library package)");
+                eprintln!("  No artifacts to install");
             }
             return Ok(());
         }
 
+        let artifact_dir = self.target_dir.join(&self.profile);
         let dest_dir = self.lib_dir().join(&self.package_name);
         fs::create_dir_all(&dest_dir)?;
 
-        for binary_name in binaries {
-            let source = target_dir.join(&binary_name);
-            let dest = dest_dir.join(&binary_name);
-
-            if source.exists() {
-                fs::copy(&source, &dest)
-                    .wrap_err_with(|| format!("Failed to copy binary: {}", binary_name))?;
-
-                // Make executable on Unix
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let mut perms = fs::metadata(&dest)?.permissions();
-                    perms.set_mode(0o755);
-                    fs::set_permissions(&dest, perms)?;
+        for target in &self.targets {
+            match target.kind {
+                InstallTargetKind::Bin => {
+                    self.install_executable(&artifact_dir, &dest_dir, &target.name)?
                 }
-
-                if self.verbose {
-                    eprintln!("  Installed binary: {}", binary_name);
+                InstallTargetKind::Lib => {
+                    self.install_library(&artifact_dir, &dest_dir, &target.name)?
                 }
-            } else if self.verbose {
-                eprintln!(
-                    "  Warning: Binary not found: {} (did you run with --release?)",
-                    binary_name
-                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Copy one executable target, if it was built
+    fn install_executable(
+        &self,
+        artifact_dir: &Path,
+        dest_dir: &Path,
+        target_name: &str,
+    ) -> Result<()> {
+        let file_name = bin_file_name(target_name);
+        let source = artifact_dir.join(&file_name);
+
+        if !source.exists() {
+            if self.verbose {
+                eprintln!("  Skipping binary (not built): {}", target_name);
+            }
+            return Ok(());
+        }
+
+        let dest = dest_dir.join(&file_name);
+        fs::copy(&source, &dest)
+            .wrap_err_with(|| format!("Failed to copy binary: {}", target_name))?;
+
+        // Make executable on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&dest)?.permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&dest, perms)?;
+        }
+
+        if self.verbose {
+            eprintln!("  Installed binary: {}", file_name);
+        }
+
+        Ok(())
+    }
+
+    /// Copy every library artifact a target produced
+    ///
+    /// The artifacts are found by probing file names rather than by mapping
+    /// crate types, so a crate declaring several `crate-type` values installs
+    /// all of them.
+    fn install_library(
+        &self,
+        artifact_dir: &Path,
+        dest_dir: &Path,
+        target_name: &str,
+    ) -> Result<()> {
+        for (prefix, suffix) in LIBRARY_NAME_PATTERNS {
+            let file_name = format!("{prefix}{target_name}.{suffix}");
+            let source = artifact_dir.join(&file_name);
+
+            if !source.exists() {
+                continue;
+            }
+
+            fs::copy(&source, dest_dir.join(&file_name))
+                .wrap_err_with(|| format!("Failed to copy library: {}", file_name))?;
+
+            if self.verbose {
+                eprintln!("  Installed library: {}", file_name);
             }
         }
 
@@ -426,56 +596,6 @@ impl AmentInstaller {
         Ok(())
     }
 
-    /// Extract binary names from Cargo.toml
-    fn extract_binary_names(&self, cargo_toml: &str) -> Vec<String> {
-        let mut binaries = Vec::new();
-
-        // Simple parser for [[bin]] sections
-        let mut in_bin_section = false;
-
-        for line in cargo_toml.lines() {
-            let trimmed = line.trim();
-
-            if trimmed == "[[bin]]" {
-                in_bin_section = true;
-                continue;
-            }
-
-            if in_bin_section {
-                if trimmed.starts_with('[') {
-                    in_bin_section = false;
-                    continue;
-                }
-
-                if trimmed.starts_with("name")
-                    && let Some(name) = self.extract_toml_string_value(trimmed)
-                {
-                    binaries.push(name);
-                }
-            }
-        }
-
-        // Also check for default binary (package name)
-        // Note: Cargo uses the package name as-is for binary names (with dashes)
-        if binaries.is_empty() {
-            binaries.push(self.package_name.clone());
-        }
-
-        binaries
-    }
-
-    /// Extract string value from TOML line (simple parser)
-    fn extract_toml_string_value(&self, line: &str) -> Option<String> {
-        let parts: Vec<&str> = line.split('=').collect();
-        if parts.len() != 2 {
-            return None;
-        }
-
-        let value = parts[1].trim();
-        let value = value.trim_matches('"').trim_matches('\'');
-        Some(value.to_string())
-    }
-
     /// Copy directory recursively
     fn copy_dir_recursive(&self, src: &Path, dst: &Path) -> Result<()> {
         copy_dir_recursive_impl(src, dst)
@@ -522,18 +642,6 @@ fn copy_dir_recursive_impl(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Check if a package is a pure library (no binaries)
-pub fn is_library_package(project_root: &Path) -> Result<bool> {
-    let cargo_toml_path = project_root.join("Cargo.toml");
-    let cargo_toml = fs::read_to_string(&cargo_toml_path).wrap_err("Failed to read Cargo.toml")?;
-
-    // Check if there's a [[bin]] section or default binary
-    let has_bin_section = cargo_toml.contains("[[bin]]");
-    let has_default_main = project_root.join("src").join("main.rs").exists();
-
-    Ok(!has_bin_section && !has_default_main)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -553,6 +661,7 @@ mod tests {
             target_dir,
             false,
             "debug".to_string(),
+            Vec::new(),
         );
 
         assert_eq!(installer.lib_dir(), install_base.join("lib"));
@@ -570,106 +679,219 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_is_library_package() {
+    /// Build an installer over a temp dir, plus the artifact dir cargo would
+    /// have written into (`<target_dir>/<profile>`).
+    fn installer_fixture(targets: Vec<InstallTarget>) -> (TempDir, AmentInstaller, PathBuf) {
         let temp_dir = TempDir::new().unwrap();
+        let install_base = temp_dir.path().join("install").join("test_pkg");
+        let project_root = temp_dir.path().join("project");
+        let target_dir = temp_dir.path().join("target");
+        let artifact_dir = target_dir.join("debug");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        fs::create_dir_all(&project_root).unwrap();
 
-        // Create a library package
-        fs::create_dir_all(temp_dir.path().join("src")).unwrap();
-        fs::write(
-            temp_dir.path().join("Cargo.toml"),
-            r#"
-[package]
-name = "test-lib"
-version = "0.1.0"
-edition = "2021"
-
-[lib]
-name = "test_lib"
-"#,
-        )
-        .unwrap();
-
-        fs::write(temp_dir.path().join("src").join("lib.rs"), "").unwrap();
-
-        assert!(is_library_package(temp_dir.path()).unwrap());
-    }
-
-    #[test]
-    fn test_is_not_library_package() {
-        let temp_dir = TempDir::new().unwrap();
-
-        // Create a binary package
-        fs::create_dir_all(temp_dir.path().join("src")).unwrap();
-        fs::write(
-            temp_dir.path().join("Cargo.toml"),
-            r#"
-[package]
-name = "test-bin"
-version = "0.1.0"
-edition = "2021"
-"#,
-        )
-        .unwrap();
-
-        fs::write(temp_dir.path().join("src").join("main.rs"), "fn main() {}").unwrap();
-
-        assert!(!is_library_package(temp_dir.path()).unwrap());
-    }
-
-    #[test]
-    fn test_extract_binary_names() {
-        let temp_dir = TempDir::new().unwrap();
         let installer = AmentInstaller::new(
-            temp_dir.path().to_path_buf(),
-            "my-pkg".to_string(),
-            temp_dir.path().to_path_buf(),
-            temp_dir.path().join("target"),
+            install_base,
+            "test_pkg".to_string(),
+            project_root,
+            target_dir,
             false,
             "debug".to_string(),
+            targets,
         );
 
-        let cargo_toml = r#"
-[package]
-name = "my-pkg"
+        (temp_dir, installer, artifact_dir)
+    }
 
-[[bin]]
-name = "my-binary"
-path = "src/main.rs"
+    fn bin_target(name: &str) -> InstallTarget {
+        InstallTarget {
+            name: name.to_string(),
+            kind: InstallTargetKind::Bin,
+            required_features: Vec::new(),
+        }
+    }
 
-[[bin]]
-name = "other-binary"
-path = "src/other.rs"
-"#;
-
-        let binaries = installer.extract_binary_names(cargo_toml);
-        assert_eq!(binaries.len(), 2);
-        assert!(binaries.contains(&"my-binary".to_string()));
-        assert!(binaries.contains(&"other-binary".to_string()));
+    fn lib_target(name: &str) -> InstallTarget {
+        InstallTarget {
+            name: name.to_string(),
+            kind: InstallTargetKind::Lib,
+            required_features: Vec::new(),
+        }
     }
 
     #[test]
-    fn test_extract_toml_string_value() {
-        let temp_dir = TempDir::new().unwrap();
-        let installer = AmentInstaller::new(
-            temp_dir.path().to_path_buf(),
-            "test".to_string(),
-            temp_dir.path().to_path_buf(),
-            temp_dir.path().join("target"),
-            false,
-            "debug".to_string(),
-        );
-
+    fn install_target_from_kinds_maps_bin() {
+        let target = InstallTarget::from_kinds("my-binary", &["bin".to_string()], &[]);
         assert_eq!(
-            installer.extract_toml_string_value("name = \"my-binary\""),
-            Some("my-binary".to_string())
+            target,
+            Some(InstallTarget {
+                name: "my-binary".to_string(),
+                kind: InstallTargetKind::Bin,
+                required_features: Vec::new(),
+            })
         );
+    }
 
+    #[test]
+    fn install_target_from_kinds_preserves_required_features() {
+        let target = InstallTarget::from_kinds(
+            "gated",
+            &["bin".to_string()],
+            &["extra".to_string(), "more".to_string()],
+        )
+        .unwrap();
+        assert_eq!(target.required_features, vec!["extra", "more"]);
+    }
+
+    #[test]
+    fn install_target_from_kinds_skips_rlib_only_library() {
+        // A plain `[lib]` reports kind "lib", which produces an rlib: nothing to install.
         assert_eq!(
-            installer.extract_toml_string_value("name='other'"),
-            Some("other".to_string())
+            InstallTarget::from_kinds("test_lib", &["lib".to_string()], &[]),
+            None
         );
+        assert_eq!(
+            InstallTarget::from_kinds("test_lib", &["rlib".to_string()], &[]),
+            None
+        );
+    }
 
-        assert_eq!(installer.extract_toml_string_value("invalid"), None);
+    #[test]
+    fn install_target_from_kinds_maps_linkable_library_kinds() {
+        for kind in ["cdylib", "staticlib", "dylib"] {
+            let target = InstallTarget::from_kinds("test_lib", &[kind.to_string()], &[]);
+            assert_eq!(
+                target.map(|t| t.kind),
+                Some(InstallTargetKind::Lib),
+                "kind {kind} should be installable"
+            );
+        }
+    }
+
+    #[test]
+    fn install_target_from_kinds_maps_library_with_mixed_crate_types() {
+        // `crate-type = ["cdylib", "rlib"]` reports both kinds on one target.
+        let target =
+            InstallTarget::from_kinds("test_lib", &["cdylib".to_string(), "rlib".to_string()], &[]);
+        assert_eq!(target.map(|t| t.kind), Some(InstallTargetKind::Lib));
+    }
+
+    #[test]
+    fn install_target_from_kinds_skips_non_artifact_kinds() {
+        for kind in ["custom-build", "test", "bench", "example", "proc-macro"] {
+            assert_eq!(
+                InstallTarget::from_kinds("thing", &[kind.to_string()], &[]),
+                None,
+                "kind {kind} should not be installed"
+            );
+        }
+    }
+
+    #[test]
+    fn bin_file_name_adds_exe_suffix_on_windows() {
+        let name = bin_file_name("robot_node");
+        if cfg!(windows) {
+            assert_eq!(name, "robot_node.exe");
+        } else {
+            assert_eq!(name, "robot_node");
+        }
+    }
+
+    #[test]
+    fn installs_bin_targets_listed_in_targets() {
+        let (_tmp, installer, artifact_dir) =
+            installer_fixture(vec![bin_target("robot_node"), bin_target("other-node")]);
+        fs::write(artifact_dir.join(bin_file_name("robot_node")), "elf").unwrap();
+        fs::write(artifact_dir.join(bin_file_name("other-node")), "elf").unwrap();
+
+        installer.install_artifacts().unwrap();
+
+        let dest = installer.lib_dir().join("test_pkg");
+        assert!(dest.join(bin_file_name("robot_node")).exists());
+        // Binary names keep hyphens; only library file stems are underscored.
+        assert!(dest.join(bin_file_name("other-node")).exists());
+    }
+
+    #[test]
+    fn installs_library_artifacts_for_every_variant() {
+        let (_tmp, installer, artifact_dir) = installer_fixture(vec![lib_target("my_rust_lib")]);
+        for filename in [
+            "libmy_rust_lib.so",
+            "libmy_rust_lib.dylib",
+            "libmy_rust_lib.a",
+            "my_rust_lib.dll",
+            "my_rust_lib.lib",
+        ] {
+            fs::write(artifact_dir.join(filename), "artifact").unwrap();
+        }
+
+        installer.install_artifacts().unwrap();
+
+        let dest = installer.lib_dir().join("test_pkg");
+        for filename in [
+            "libmy_rust_lib.so",
+            "libmy_rust_lib.dylib",
+            "libmy_rust_lib.a",
+            "my_rust_lib.dll",
+            "my_rust_lib.lib",
+        ] {
+            assert!(dest.join(filename).exists(), "{filename} not installed");
+        }
+    }
+
+    #[test]
+    fn install_skips_artifacts_missing_from_build_dir() {
+        // A binary whose required features were not enabled is simply absent.
+        let (_tmp, installer, _artifact_dir) = installer_fixture(vec![bin_target("never_built")]);
+
+        installer.install_artifacts().unwrap();
+
+        assert!(
+            !installer
+                .lib_dir()
+                .join("test_pkg")
+                .join(bin_file_name("never_built"))
+                .exists()
+        );
+    }
+
+    #[test]
+    fn library_only_package_still_installs_its_cdylib() {
+        let (_tmp, installer, artifact_dir) = installer_fixture(vec![lib_target("test_pkg")]);
+        fs::write(artifact_dir.join("libtest_pkg.so"), "artifact").unwrap();
+        fs::write(installer.project_root.join("Cargo.toml"), "[package]\n").unwrap();
+
+        installer.install().unwrap();
+
+        assert!(
+            installer
+                .lib_dir()
+                .join("test_pkg")
+                .join("libtest_pkg.so")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn create_markers_registers_package_in_rust_packages_index() {
+        let (_tmp, installer, _artifact_dir) = installer_fixture(Vec::new());
+
+        installer.create_markers().unwrap();
+
+        let resource_index = installer.ament_index_dir().join("resource_index");
+        assert!(resource_index.join("packages").join("test_pkg").exists());
+        assert!(
+            resource_index
+                .join("package_type")
+                .join("test_pkg")
+                .exists()
+        );
+        assert!(
+            resource_index
+                .join("rust_packages")
+                .join("test_pkg")
+                .exists(),
+            "rust_packages marker is required for colcon-ros-cargo interop"
+        );
     }
 }

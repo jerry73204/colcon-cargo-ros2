@@ -60,10 +60,11 @@ install_to_share = ["launch", "config"]
         target_dir,
         false,
         "debug".to_string(),
+        Vec::new(),
     );
 
     // Run installation
-    installer.install(true).unwrap();
+    installer.install().unwrap();
 
     // Verify files were installed
     let share_dir = install_base.join("share").join("test-pkg");
@@ -128,10 +129,11 @@ install_to_include = ["include"]
         target_dir,
         false,
         "debug".to_string(),
+        Vec::new(),
     );
 
     // Run installation
-    installer.install(true).unwrap();
+    installer.install().unwrap();
 
     // Verify files were installed
     let include_dir = install_base.join("include").join("test-pkg");
@@ -195,10 +197,11 @@ install_to_lib = ["scripts"]
         target_dir,
         false,
         "debug".to_string(),
+        Vec::new(),
     );
 
     // Run installation
-    installer.install(true).unwrap();
+    installer.install().unwrap();
 
     // Verify files were installed
     let lib_dir = install_base.join("lib").join("test-pkg");
@@ -261,10 +264,11 @@ install_to_share = ["README.md"]
         target_dir,
         false,
         "debug".to_string(),
+        Vec::new(),
     );
 
     // Run installation
-    installer.install(true).unwrap();
+    installer.install().unwrap();
 
     // Verify file was installed (only filename, no parent directory)
     let share_dir = install_base.join("share").join("test-pkg");
@@ -327,10 +331,11 @@ install_to_include = ["mylib.h"]
         target_dir,
         false,
         "debug".to_string(),
+        Vec::new(),
     );
 
     // Run installation
-    installer.install(true).unwrap();
+    installer.install().unwrap();
 
     // Verify file was installed
     let include_dir = install_base.join("include").join("test-pkg");
@@ -393,10 +398,11 @@ install_to_lib = ["setup.sh"]
         target_dir,
         false,
         "debug".to_string(),
+        Vec::new(),
     );
 
     // Run installation
-    installer.install(true).unwrap();
+    installer.install().unwrap();
 
     // Verify file was installed
     let lib_dir = install_base.join("lib").join("test-pkg");
@@ -464,10 +470,11 @@ install_to_share = ["launch", "config", "README.md", "LICENSE"]
         target_dir,
         false,
         "debug".to_string(),
+        Vec::new(),
     );
 
     // Run installation
-    installer.install(true).unwrap();
+    installer.install().unwrap();
 
     // Verify directories were installed
     let share_dir = install_base.join("share").join("test-pkg");

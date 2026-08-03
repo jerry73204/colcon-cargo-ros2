@@ -17,12 +17,14 @@
 
 | Phase                                 | Status           | Progress             | Details |
 |---------------------------------------|------------------|----------------------|---------|
-| Phase 0: Project Preparation          | ✅ Complete      | 3/3 subphases        | [View](ROADMAP/phase-0-preparation.md) |
-| Phase 1: Native Rust IDL Generator    | 🔄 In Progress   | 6/7 subphases        | [View](ROADMAP/phase-1-idl-generator.md) |
-| Phase 2: cargo-ros2 Tools             | ✅ Complete      | 2/2 subphases        | [View](ROADMAP/phase-2-tools.md) |
-| Phase 3: Production Features          | ✅ Complete      | 4/4 subphases        | [View](ROADMAP/phase-3-production.md) |
-| Phase 4: colcon Integration & Release | 🔄 In Progress   | 3/6 subphases        | [View](ROADMAP/phase-4-integration.md) |
-| Phase 5: OMG IDL 4.2 Support          | ✅ Complete      | 4/4 subphases        | [View](ROADMAP/phase-5-idl-support.md) |
+| Phase 0: Project Preparation          | ✅ Complete      | 3/3 subphases        | [View](../phases/000-preparation.md) |
+| Phase 1: Native Rust IDL Generator    | 🔄 In Progress   | 6/7 subphases        | [View](../phases/001-idl-generator.md) |
+| Phase 2: cargo-ros2 Tools             | ✅ Complete      | 2/2 subphases        | [View](../phases/002-tools.md) |
+| Phase 3: Production Features          | ✅ Complete      | 4/4 subphases        | [View](../phases/003-production.md) |
+| Phase 4: colcon Integration & Release | 🔄 In Progress   | 3/6 subphases        | [View](../phases/004-integration.md) |
+| Phase 5: OMG IDL 4.2 Support          | ✅ Complete      | 4/4 subphases        | [View](../phases/005-idl-support.md) |
+| Phase 6: IDE Support                  | ✅ Complete      | 4/4 subphases        | [View](../phases/006-ide-support.md) |
+| Phase 7: cargo-ament-build Parity     | 📋 Not started   | 0/7 subphases        | [View](../phases/007-cargo-ament-build-parity.md) |
 
 **Latest Achievement**: Phase 5 complete! 🎉 Full OMG IDL 4.2 support with lexer, parser, code generation, constant modules, @default annotations, and enums. Fixed constant module parsing order and RMW type path resolution. All 194 tests passing (100%)!
 
@@ -53,7 +55,7 @@
     2. Missing module imports in generated code
     3. Trait definition stubs don't match actual rosidl_runtime_rs
   - Fix locations identified in cargo-ros2-bindgen and rosidl-codegen templates
-  - [See detailed work items](ROADMAP/phase-1-idl-generator.md#subphase-17-code-generation-fixes-1-week)
+  - [See detailed work items](../phases/001-idl-generator.md#subphase-17-code-generation-fixes-1-week)
 
 ### Clarified ✅
 
@@ -62,7 +64,7 @@
   - **Reality**: Current implementation is CORRECT and aligns with colcon's design!
   - **Key insight**: Colcon builds packages in topological dependency order, so dependencies are ALWAYS in install/ before dependents build
   - Only needs documentation, no code changes required
-  - [See detailed analysis](ROADMAP/phase-4-integration.md#subphase-413-workspace-interface-package-discovery-1-week)
+  - [See detailed analysis](../phases/004-integration.md#subphase-413-workspace-interface-package-discovery-1-week)
 
 ### Next Tasks 📋
 
@@ -88,7 +90,7 @@
 - ✅ 0.2: Documentation Setup (README, CONTRIBUTING, templates)
 - ✅ 0.3: Dependencies & Tooling (clap, eyre, cargo-nextest)
 
-**[View Full Phase Details →](ROADMAP/phase-0-preparation.md)**
+**[View Full Phase Details →](../phases/000-preparation.md)**
 
 ---
 
@@ -109,7 +111,7 @@
 
 **Key Achievement**: Pure Rust implementation with no Python dependency, 100% message parsing success rate, complete FFI bindings.
 
-**[View Full Phase Details →](ROADMAP/phase-1-idl-generator.md)**
+**[View Full Phase Details →](../phases/001-idl-generator.md)**
 
 ---
 
@@ -125,7 +127,7 @@
 
 **Key Achievement**: Complete CLI tools with intelligent caching, 181 tests passing, production-ready.
 
-**[View Full Phase Details →](ROADMAP/phase-2-tools.md)**
+**[View Full Phase Details →](../phases/002-tools.md)**
 
 ---
 
@@ -143,7 +145,7 @@
 
 **Key Achievement**: Production-ready with parallel builds, beautiful CLI, comprehensive testing.
 
-**[View Full Phase Details →](ROADMAP/phase-3-production.md)**
+**[View Full Phase Details →](../phases/003-production.md)**
 
 ---
 
@@ -164,7 +166,7 @@
 
 **Key Achievement**: Eliminated circular dependencies, centralized config.toml management, clarified workspace discovery design.
 
-**[View Full Phase Details →](ROADMAP/phase-4-integration.md)**
+**[View Full Phase Details →](../phases/004-integration.md)**
 
 ---
 
@@ -188,20 +190,22 @@
 
 **Key Achievement**: Complete IDL lexer/parser with 189/194 tests passing (97.4%)! Module path format updated to pkg::ffi::msg::module::Type for correct FFI hierarchy.
 
-**[View Full Phase Details →](ROADMAP/phase-5-idl-support.md)**
+**[View Full Phase Details →](../phases/005-idl-support.md)**
 
 ---
 
 ## Additional Resources
 
 ### Planning & Strategy
-- **[Milestones & Success Criteria](ROADMAP/milestones.md)** - M0-M4 milestones, technical/quality/community goals
-- **[Testing Strategy](ROADMAP/testing-strategy.md)** - Unit, integration, end-to-end, regression testing approach
-- **[Timeline & Schedule](ROADMAP/timeline.md)** - Phase durations, cumulative timeline, 19-week total estimate
+- **[Phase Documents](../phases/)** - Detailed per-phase objectives, design, and exit criteria
+- **[Testing Strategy](testing-strategy.md)** - Unit, integration, end-to-end, regression testing approach
+- **[Timeline & Schedule](timeline.md)** - Phase durations, cumulative timeline, 19-week total estimate
+- **[colcon Test Support](colcon-test-support.md)** - `colcon test` integration notes
 
 ### Design Documentation
-- **[DESIGN.md](DESIGN.md)** - Technical design and architecture
-- **[CLAUDE.md](../CLAUDE.md)** - Project instructions and overview
+- **[design.md](../design.md)** - Technical design and architecture
+- **[architecture.md](../architecture.md)** - System architecture overview
+- **[CLAUDE.md](../../CLAUDE.md)** - Project instructions and overview
 
 ### Progress Tracking
 - **[Current Status](#current-status)** - What's done, what's in progress, what's next

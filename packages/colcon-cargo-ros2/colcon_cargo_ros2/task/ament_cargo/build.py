@@ -1,6 +1,7 @@
 # Licensed under the Apache License, Version 2.0
 
 import os
+import shutil
 from pathlib import Path
 
 from colcon_core.environment import create_environment_hooks, create_environment_scripts
@@ -14,6 +15,90 @@ from colcon_cargo_ros2 import cargo_ros2_py
 from colcon_cargo_ros2.workspace_bindgen import generate_workspace_bindings
 
 logger = colcon_logger.getChild(__name__)
+
+
+def find_cargo_executable():
+    """Locate the cargo executable.
+
+    :returns: Path to cargo, or None if it is not on PATH
+    """
+    return shutil.which("cargo")
+
+
+def detect_cargo_features(cargo_args):
+    """Parse the feature selection out of cargo arguments.
+
+    Mirrors what cargo itself accepts: ``--features``/``-F`` in both the
+    space-separated and ``=`` forms, values split on commas or whitespace, and
+    repeated flags accumulating.
+
+    :param cargo_args: Arguments destined for cargo (may be None)
+    :returns: (features, no_default_features, all_features)
+    """
+    features = []
+    no_default_features = False
+    all_features = False
+
+    cargo_args = cargo_args or []
+    index = 0
+    while index < len(cargo_args):
+        arg = cargo_args[index]
+
+        if arg == "--no-default-features":
+            no_default_features = True
+        elif arg == "--all-features":
+            all_features = True
+        elif arg in ("--features", "-F"):
+            # Value is the next argument, if there is one
+            if index + 1 < len(cargo_args):
+                features.extend(_split_feature_list(cargo_args[index + 1]))
+                index += 1
+        elif arg.startswith("--features=") or arg.startswith("-F="):
+            features.extend(_split_feature_list(arg.split("=", 1)[1]))
+
+        index += 1
+
+    # Preserve order while dropping duplicates
+    deduplicated = list(dict.fromkeys(features))
+
+    return deduplicated, no_default_features, all_features
+
+
+def _split_feature_list(value):
+    """Split a --features value on commas and whitespace."""
+    return [feature for feature in value.replace(",", " ").split() if feature]
+
+
+def detect_cargo_target(cargo_args, env=None):
+    """Determine the target triple a build was compiled for.
+
+    ``--target`` wins over ``$CARGO_BUILD_TARGET``, matching cargo.
+
+    Note that a ``[build] target`` entry in ``.cargo/config.toml`` is not
+    consulted. We generate that file ourselves and never set ``target`` in it.
+
+    :param cargo_args: Arguments destined for cargo (may be None)
+    :param env: Environment mapping to read CARGO_BUILD_TARGET from
+    :returns: The target triple, or None for a native build
+    """
+    cargo_args = cargo_args or []
+    index = 0
+    while index < len(cargo_args):
+        arg = cargo_args[index]
+
+        if arg == "--target":
+            if index + 1 < len(cargo_args):
+                return cargo_args[index + 1]
+            return None
+        if arg.startswith("--target="):
+            return arg.split("=", 1)[1]
+
+        index += 1
+
+    if env is None:
+        env = os.environ
+
+    return env.get("CARGO_BUILD_TARGET") or None
 
 
 class AmentCargoBuildTask(TaskExtensionPoint):
@@ -88,6 +173,17 @@ class AmentCargoBuildTask(TaskExtensionPoint):
 
     async def _prepare_workspace_bindings(self):
         """Generate workspace-level ROS 2 bindings (done once for entire workspace)."""
+        # Fail early and clearly if the Rust toolchain is missing, rather than
+        # letting the build blow up part-way through
+        if find_cargo_executable() is None:
+            logger.error(
+                "\n\nCould not find the 'cargo' executable on PATH."
+                "\n\nRust ROS 2 packages are built with cargo. Install the Rust"
+                " toolchain and make sure it is on PATH:"
+                "\n  $ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh\n"
+            )
+            return 1
+
         # Check that cargo_ros2_py module is available
         try:
             # Quick check that the module loaded correctly
@@ -243,6 +339,12 @@ class AmentCargoBuildTask(TaskExtensionPoint):
         profile = self._detect_cargo_profile(cargo_args, args)
         verbose = getattr(args, "verbose", False)
 
+        # Cross-compiled builds put artifacts under an extra target-triple
+        # directory, and feature-gated targets are only built when their
+        # features were enabled
+        arch = detect_cargo_target(cargo_args)
+        features, no_default_features, all_features = detect_cargo_features(cargo_args)
+
         # Execute installation via direct API call
         try:
             # Create configuration for installation
@@ -255,6 +357,10 @@ class AmentCargoBuildTask(TaskExtensionPoint):
                 build_base=str(self._build_base),
                 profile=profile,
                 verbose=verbose,
+                arch=arch,
+                features=features,
+                no_default_features=no_default_features,
+                all_features=all_features,
             )
 
             # Call Rust function directly (no subprocess!)

@@ -71,18 +71,41 @@ struct InstallConfig {
     profile: String,
     #[pyo3(get, set)]
     verbose: bool,
+    #[pyo3(get, set)]
+    arch: Option<String>,
+    #[pyo3(get, set)]
+    features: Vec<String>,
+    #[pyo3(get, set)]
+    no_default_features: bool,
+    #[pyo3(get, set)]
+    all_features: bool,
 }
 
 #[pymethods]
 impl InstallConfig {
     #[new]
-    #[pyo3(signature = (project_root, install_base, build_base, profile="debug".to_string(), verbose=false))]
+    #[pyo3(signature = (
+        project_root,
+        install_base,
+        build_base,
+        profile="debug".to_string(),
+        verbose=false,
+        arch=None,
+        features=Vec::new(),
+        no_default_features=false,
+        all_features=false,
+    ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         project_root: String,
         install_base: String,
         build_base: String,
         profile: String,
         verbose: bool,
+        arch: Option<String>,
+        features: Vec<String>,
+        no_default_features: bool,
+        all_features: bool,
     ) -> Self {
         Self {
             project_root,
@@ -90,6 +113,10 @@ impl InstallConfig {
             build_base,
             profile,
             verbose,
+            arch,
+            features,
+            no_default_features,
+            all_features,
         }
     }
 
@@ -158,6 +185,10 @@ fn install_to_ament(config: InstallConfig) -> PyResult<()> {
         build_base: PathBuf::from(config.build_base),
         profile: config.profile,
         verbose: config.verbose,
+        arch: config.arch,
+        features: config.features,
+        no_default_features: config.no_default_features,
+        all_features: config.all_features,
     };
 
     cargo_ros2::install_to_ament(rust_config)

@@ -6,7 +6,7 @@
 
 **Scope**: `packages/cargo-ros2` (installer), `packages/colcon-cargo-ros2` (PyO3 config plumbing + build task).
 
-**Status**: 7.1, 7.4, 7.5, 7.6 complete. 7.2, 7.3, 7.7 not started.
+**Status**: Complete (7.1–7.7).
 
 ---
 
@@ -70,47 +70,40 @@ It also registers the package under `share/ament_index/resource_index/rust_packa
 
 ---
 
-### Subphase 7.2: Honor `required-features`
+### Subphase 7.2: Honor `required-features` — **done**
 
 **Objective**: Skip artifacts whose required features were not enabled for the build, instead of warning that the binary is missing.
 
 **Design**:
 
-- Add `features: Vec<String>` to `cargo_ros2::InstallConfig` (`lib.rs:57`) and to the PyO3 `InstallConfig` (`packages/colcon-cargo-ros2/src/lib.rs:63`), defaulting to empty.
-- In `AmentCargoBuildTask._install_package()` (`task/ament_cargo/build.py:236`), parse the effective feature set from `cargo_args`, mirroring the existing `_detect_cargo_profile()` pattern:
-  - `--features a,b` / `--features=a,b` / repeated `--features` → union of comma- and space-separated names
-  - `--all-features` → sentinel handled by skipping the filter entirely
-  - `--no-default-features` → do not implicitly add `default`
-  - otherwise → add `default` (and, for correctness, the transitive closure of `default` from `root_package.features`, resolved on the Rust side where the feature table is available)
-- In `install_binaries()`, skip a target when any name in `required_features` is absent from the resolved set.
+- Added `features`, `no_default_features` and `all_features` to `cargo_ros2::InstallConfig` and to the PyO3 `InstallConfig`, defaulting to empty/false.
+- `detect_cargo_features()` in `task/ament_cargo/build.py` parses the selection from `cargo_args`, accepting what cargo accepts: `--features`/`-F`, both the space-separated and `=` forms, values split on commas or whitespace, repeated flags accumulating, plus `--all-features` and `--no-default-features`. Malformed input (a trailing `--features` with no value) is ignored rather than raising, since it arrives straight from the user's `--cargo-args`.
+- The feature *closure* is resolved on the Rust side by `resolve_enabled_features()`, where `root_package.features` is available: seed with the requested names plus `default` (unless `--no-default-features`), then expand transitively. `dep:foo` and `other_crate/feat` entries are excluded — they are not features of this package, and `required-features` can only name local features.
+- `install_artifacts()` skips a target unless *every* name in `required_features` is enabled.
 
-**Tests**:
-- Target with `required-features = ["extra"]`, built without `--features extra` → not installed, no warning.
-- Same target built with `--features extra` → installed.
-- `--all-features` → every target installed.
+**Tests**: unit tests for default closure expansion, `--no-default-features`, explicit feature expansion, `--all-features`, and dependency-scoped entry exclusion; installer tests for a gated binary skipped, installed once its feature is on, and skipped when only some of several required features are on. Python tests cover every accepted flag form.
 
 ---
 
-### Subphase 7.3: Cross-compilation target directory
+### Subphase 7.3: Cross-compilation target directory — **done**
 
 **Objective**: Locate build artifacts under `build_base/<triple>/<profile>` when building for a non-host target.
 
 **Design**:
 
-- Add `arch: Option<String>` to both `InstallConfig` structs.
-- Resolve in `build.py` with the same precedence the reference uses: `--target <triple>` or `--target=<triple>` in `cargo_args`, else `$CARGO_BUILD_TARGET`, else `None`.
-- In `install_binaries()`:
+- Added `arch: Option<String>` to both `InstallConfig` structs, plumbed through `AmentInstaller::with_arch()`.
+- `detect_cargo_target()` in `build.py` resolves it with the same precedence cargo uses: `--target <triple>` or `--target=<triple>` in `cargo_args`, else `$CARGO_BUILD_TARGET`, else `None`.
+- `AmentInstaller::artifact_dir()`:
   ```rust
-  let artifact_dir = match &self.arch {
+  match &self.arch {
       Some(arch) => self.target_dir.join(arch).join(&self.profile),
       None => self.target_dir.join(&self.profile),
-  };
+  }
   ```
 
 **Note**: `--target` may also come from `.cargo/config.toml` `[build] target`. We generate that file ourselves (`workspace_bindgen.py`) and do not set `target` there, so reading it is out of scope; document the limitation in `docs/troubleshooting.md`.
 
-**Tests**:
-- Installer unit test with `arch = Some("x86_64-unknown-linux-gnu")` and artifacts present in both `<triple>/debug/` and `debug/` → the triple-qualified one is installed (mirrors `cargo-ament-build`'s `test_install_binaries_with_arch`).
+**Tests**: installer unit test with artifacts in both `<triple>/debug/` and `debug/` asserting the triple-qualified one wins (mirrors `cargo-ament-build`'s `test_install_binaries_with_arch`); Python tests for both flag forms, the environment fallback, and flag-beats-environment precedence.
 
 ---
 
@@ -154,7 +147,7 @@ It also registers the package under `share/ament_index/resource_index/rust_packa
 
 ---
 
-### Subphase 7.7: Toolchain preflight check
+### Subphase 7.7: Toolchain preflight check — **done**
 
 **Objective**: Fail with an actionable message when the PyO3 extension module is unusable, rather than surfacing an opaque import error mid-build.
 
@@ -180,12 +173,12 @@ Removing `is_library_package()` changes a public function in `packages/cargo-ros
 ### Exit criteria
 
 - [x] `src/bin/*.rs` binaries install without an explicit `[[bin]]` section
-- [ ] `required-features`-gated binaries install iff their features were enabled *(7.2)*
-- [ ] `--target <triple>` builds install from `build_base/<triple>/<profile>` *(7.3)*
+- [x] `required-features`-gated binaries install iff their features were enabled
+- [x] `--target <triple>` builds install from `build_base/<triple>/<profile>`
 - [x] `cdylib`/`staticlib` artifacts install to `lib/<pkg>/`
 - [x] Windows binaries install with `.exe`
 - [x] `resource_index/rust_packages/<pkg>` marker written
-- [ ] Missing `cargo` produces an actionable error before the build starts *(7.7)*
+- [x] Missing `cargo` produces an actionable error before the build starts
 - [x] nightly rustfmt clean, zero clippy warnings, all Rust + Python tests pass
 - [x] `testing_workspaces/my_robot_node` builds and runs after `just clean && just build`
 - [ ] `testing_workspaces/complex_workspace` builds — blocked on `moveit_msgs` not being installed locally, needs `just install-deps`

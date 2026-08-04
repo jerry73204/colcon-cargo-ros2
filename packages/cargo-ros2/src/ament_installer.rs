@@ -5,6 +5,7 @@
 //! source files, binaries, and metadata.
 
 use eyre::{Result, WrapErr};
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -92,6 +93,48 @@ pub fn install_targets_from_package(package: &cargo_metadata::Package) -> Vec<In
         .collect()
 }
 
+/// Resolve the set of features that were active during compilation.
+///
+/// `package_features` is the package's own feature table (`[features]` in
+/// `Cargo.toml`). `requested` holds the names passed via `--features`;
+/// `no_default_features` and `all_features` correspond to the Cargo flags of
+/// the same name.
+///
+/// Entries that name something other than a feature of this package —
+/// `dep:serde` (an optional dependency) and `other_crate/feat` (a feature of a
+/// dependency) — are not part of this package's feature namespace and are
+/// excluded, since `required-features` can only refer to local features.
+pub fn resolve_enabled_features(
+    package_features: &BTreeMap<String, Vec<String>>,
+    requested: &[String],
+    no_default_features: bool,
+    all_features: bool,
+) -> HashSet<String> {
+    if all_features {
+        return package_features.keys().cloned().collect();
+    }
+
+    let mut pending: Vec<String> = requested.to_vec();
+    if !no_default_features && package_features.contains_key("default") {
+        pending.push("default".to_string());
+    }
+
+    let mut enabled = HashSet::new();
+    while let Some(feature) = pending.pop() {
+        if feature.starts_with("dep:") || feature.contains('/') {
+            continue;
+        }
+        if !enabled.insert(feature.clone()) {
+            continue;
+        }
+        if let Some(implied) = package_features.get(&feature) {
+            pending.extend(implied.iter().cloned());
+        }
+    }
+
+    enabled
+}
+
 /// Collect the installable targets of the package rooted at `project_root`.
 ///
 /// This runs `cargo metadata`, which performs Cargo's own target
@@ -125,12 +168,20 @@ pub struct AmentInstaller {
     verbose: bool,
     /// Build profile (debug or release)
     profile: String,
+    /// Target triple for cross-compiled builds, `None` for native builds
+    arch: Option<String>,
     /// Targets whose artifacts should be installed
     targets: Vec<InstallTarget>,
+    /// Features that were enabled during compilation
+    enabled_features: HashSet<String>,
 }
 
 impl AmentInstaller {
     /// Create a new ament installer
+    ///
+    /// The installer starts with no targets, no target triple and no enabled
+    /// features; use [`Self::with_targets`], [`Self::with_arch`] and
+    /// [`Self::with_enabled_features`] to fill those in.
     pub fn new(
         install_base: PathBuf,
         package_name: String,
@@ -138,7 +189,6 @@ impl AmentInstaller {
         target_dir: PathBuf,
         verbose: bool,
         profile: String,
-        targets: Vec<InstallTarget>,
     ) -> Self {
         Self {
             install_base,
@@ -147,8 +197,28 @@ impl AmentInstaller {
             target_dir,
             verbose,
             profile,
-            targets,
+            arch: None,
+            targets: Vec::new(),
+            enabled_features: HashSet::new(),
         }
+    }
+
+    /// Set the targets whose artifacts should be installed
+    pub fn with_targets(mut self, targets: Vec<InstallTarget>) -> Self {
+        self.targets = targets;
+        self
+    }
+
+    /// Set the target triple, which moves artifacts into `<target_dir>/<triple>/<profile>`
+    pub fn with_arch(mut self, arch: Option<String>) -> Self {
+        self.arch = arch;
+        self
+    }
+
+    /// Set the features that were enabled during compilation
+    pub fn with_enabled_features(mut self, enabled_features: HashSet<String>) -> Self {
+        self.enabled_features = enabled_features;
+        self
     }
 
     /// Run the complete installation process
@@ -396,11 +466,22 @@ impl AmentInstaller {
             return Ok(());
         }
 
-        let artifact_dir = self.target_dir.join(&self.profile);
+        let artifact_dir = self.artifact_dir();
         let dest_dir = self.lib_dir().join(&self.package_name);
         fs::create_dir_all(&dest_dir)?;
 
         for target in &self.targets {
+            if !self.features_satisfied(target) {
+                if self.verbose {
+                    eprintln!(
+                        "  Skipping {} (requires features: {})",
+                        target.name,
+                        target.required_features.join(", ")
+                    );
+                }
+                continue;
+            }
+
             match target.kind {
                 InstallTargetKind::Bin => {
                     self.install_executable(&artifact_dir, &dest_dir, &target.name)?
@@ -412,6 +493,27 @@ impl AmentInstaller {
         }
 
         Ok(())
+    }
+
+    /// The directory Cargo wrote this build's artifacts into
+    ///
+    /// Cross-compiled builds get an extra target-triple component.
+    fn artifact_dir(&self) -> PathBuf {
+        match &self.arch {
+            Some(arch) => self.target_dir.join(arch).join(&self.profile),
+            None => self.target_dir.join(&self.profile),
+        }
+    }
+
+    /// Whether every feature a target requires was enabled during compilation
+    ///
+    /// A target with unmet `required-features` is never built, so installing
+    /// it would fail; it is skipped instead.
+    fn features_satisfied(&self, target: &InstallTarget) -> bool {
+        target
+            .required_features
+            .iter()
+            .all(|feature| self.enabled_features.contains(feature))
     }
 
     /// Copy one executable target, if it was built
@@ -661,7 +763,6 @@ mod tests {
             target_dir,
             false,
             "debug".to_string(),
-            Vec::new(),
         );
 
         assert_eq!(installer.lib_dir(), install_base.join("lib"));
@@ -697,10 +798,58 @@ mod tests {
             target_dir,
             false,
             "debug".to_string(),
-            targets,
-        );
+        )
+        .with_targets(targets);
 
         (temp_dir, installer, artifact_dir)
+    }
+
+    /// Like [`installer_fixture`], but for a cross-compiled build: the
+    /// artifact dir is `<target_dir>/<triple>/<profile>`.
+    fn cross_installer_fixture(
+        triple: &str,
+        targets: Vec<InstallTarget>,
+    ) -> (TempDir, AmentInstaller, PathBuf) {
+        let temp_dir = TempDir::new().unwrap();
+        let install_base = temp_dir.path().join("install").join("test_pkg");
+        let project_root = temp_dir.path().join("project");
+        let target_dir = temp_dir.path().join("target");
+        let artifact_dir = target_dir.join(triple).join("debug");
+        fs::create_dir_all(&artifact_dir).unwrap();
+        fs::create_dir_all(&project_root).unwrap();
+
+        let installer = AmentInstaller::new(
+            install_base,
+            "test_pkg".to_string(),
+            project_root,
+            target_dir,
+            false,
+            "debug".to_string(),
+        )
+        .with_targets(targets)
+        .with_arch(Some(triple.to_string()));
+
+        (temp_dir, installer, artifact_dir)
+    }
+
+    fn feature_table(entries: &[(&str, &[&str])]) -> BTreeMap<String, Vec<String>> {
+        entries
+            .iter()
+            .map(|(name, deps)| {
+                (
+                    name.to_string(),
+                    deps.iter().map(|d| d.to_string()).collect(),
+                )
+            })
+            .collect()
+    }
+
+    fn gated_bin(name: &str, required_features: &[&str]) -> InstallTarget {
+        InstallTarget {
+            name: name.to_string(),
+            kind: InstallTargetKind::Bin,
+            required_features: required_features.iter().map(|f| f.to_string()).collect(),
+        }
     }
 
     fn bin_target(name: &str) -> InstallTarget {
@@ -870,6 +1019,151 @@ mod tests {
                 .join("libtest_pkg.so")
                 .exists()
         );
+    }
+
+    #[test]
+    fn resolve_features_enables_default_and_its_closure() {
+        let features = feature_table(&[
+            ("default", &["std"]),
+            ("std", &["alloc"]),
+            ("alloc", &[]),
+            ("extra", &[]),
+        ]);
+
+        let enabled = resolve_enabled_features(&features, &[], false, false);
+
+        assert!(enabled.contains("default"));
+        assert!(enabled.contains("std"));
+        assert!(enabled.contains("alloc"), "closure must be transitive");
+        assert!(!enabled.contains("extra"));
+    }
+
+    #[test]
+    fn resolve_features_honors_no_default_features() {
+        let features = feature_table(&[("default", &["std"]), ("std", &[]), ("extra", &[])]);
+
+        let enabled = resolve_enabled_features(&features, &["extra".to_string()], true, false);
+
+        assert!(enabled.contains("extra"));
+        assert!(!enabled.contains("default"));
+        assert!(!enabled.contains("std"));
+    }
+
+    #[test]
+    fn resolve_features_expands_explicitly_requested_features() {
+        let features = feature_table(&[("default", &[]), ("extra", &["helper"]), ("helper", &[])]);
+
+        let enabled = resolve_enabled_features(&features, &["extra".to_string()], false, false);
+
+        assert!(enabled.contains("default"));
+        assert!(enabled.contains("extra"));
+        assert!(enabled.contains("helper"));
+    }
+
+    #[test]
+    fn resolve_features_with_all_features_enables_every_feature() {
+        let features = feature_table(&[("default", &[]), ("a", &[]), ("b", &[])]);
+
+        let enabled = resolve_enabled_features(&features, &[], true, true);
+
+        assert!(enabled.contains("default"));
+        assert!(enabled.contains("a"));
+        assert!(enabled.contains("b"));
+    }
+
+    #[test]
+    fn resolve_features_ignores_dependency_scoped_entries() {
+        // "dep:serde" and "other/feat" refer to dependencies, not to features
+        // of this package, so they must not leak into the enabled set.
+        let features = feature_table(&[
+            ("default", &["serde"]),
+            ("serde", &["dep:serde", "rosidl_runtime_rs/serde"]),
+        ]);
+
+        let enabled = resolve_enabled_features(&features, &[], false, false);
+
+        assert!(enabled.contains("serde"));
+        assert!(!enabled.contains("dep:serde"));
+        assert!(!enabled.contains("rosidl_runtime_rs/serde"));
+    }
+
+    #[test]
+    fn skips_binary_whose_required_features_are_not_enabled() {
+        let (_tmp, installer, artifact_dir) =
+            installer_fixture(vec![gated_bin("gated", &["extra"])]);
+        fs::write(artifact_dir.join(bin_file_name("gated")), "elf").unwrap();
+
+        installer.install_artifacts().unwrap();
+
+        assert!(
+            !installer
+                .lib_dir()
+                .join("test_pkg")
+                .join(bin_file_name("gated"))
+                .exists(),
+            "a binary gated behind a disabled feature must not be installed"
+        );
+    }
+
+    #[test]
+    fn installs_binary_whose_required_features_are_enabled() {
+        let (_tmp, installer, artifact_dir) =
+            installer_fixture(vec![gated_bin("gated", &["extra"])]);
+        let installer = installer.with_enabled_features(HashSet::from(["extra".to_string()]));
+        fs::write(artifact_dir.join(bin_file_name("gated")), "elf").unwrap();
+
+        installer.install_artifacts().unwrap();
+
+        assert!(
+            installer
+                .lib_dir()
+                .join("test_pkg")
+                .join(bin_file_name("gated"))
+                .exists()
+        );
+    }
+
+    #[test]
+    fn requires_every_listed_feature_not_just_one() {
+        let (_tmp, installer, artifact_dir) =
+            installer_fixture(vec![gated_bin("gated", &["extra", "more"])]);
+        let installer = installer.with_enabled_features(HashSet::from(["extra".to_string()]));
+        fs::write(artifact_dir.join(bin_file_name("gated")), "elf").unwrap();
+
+        installer.install_artifacts().unwrap();
+
+        assert!(
+            !installer
+                .lib_dir()
+                .join("test_pkg")
+                .join(bin_file_name("gated"))
+                .exists()
+        );
+    }
+
+    #[test]
+    fn installs_artifacts_from_the_target_triple_directory() {
+        let triple = "x86_64-unknown-linux-gnu";
+        let (_tmp, installer, artifact_dir) =
+            cross_installer_fixture(triple, vec![bin_target("robot_node")]);
+        fs::write(artifact_dir.join(bin_file_name("robot_node")), "cross").unwrap();
+        // A host-profile artifact of the same name must be ignored.
+        let host_dir = artifact_dir
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("debug");
+        fs::create_dir_all(&host_dir).unwrap();
+        fs::write(host_dir.join(bin_file_name("robot_node")), "host").unwrap();
+
+        installer.install_artifacts().unwrap();
+
+        let installed = installer
+            .lib_dir()
+            .join("test_pkg")
+            .join(bin_file_name("robot_node"));
+        assert_eq!(fs::read_to_string(installed).unwrap(), "cross");
     }
 
     #[test]

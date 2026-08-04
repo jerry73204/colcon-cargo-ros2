@@ -65,6 +65,14 @@ pub struct InstallConfig {
     pub profile: String,
     /// Enable verbose output
     pub verbose: bool,
+    /// Target triple the build was compiled for, `None` for native builds
+    pub arch: Option<String>,
+    /// Features requested via `--features`
+    pub features: Vec<String>,
+    /// Whether `--no-default-features` was passed
+    pub no_default_features: bool,
+    /// Whether `--all-features` was passed
+    pub all_features: bool,
 }
 
 /// Generate Rust bindings for a ROS 2 interface package
@@ -161,13 +169,19 @@ pub fn generate_bindings(config: BindgenConfig) -> Result<()> {
 ///     build_base: PathBuf::from("build/my_package"),
 ///     profile: "release".to_string(),
 ///     verbose: true,
+///     arch: None,
+///     features: Vec::new(),
+///     no_default_features: false,
+///     all_features: false,
 /// };
 ///
 /// install_to_ament(config)?;
 /// # Ok::<(), eyre::Report>(())
 /// ```
 pub fn install_to_ament(config: InstallConfig) -> Result<()> {
-    use crate::ament_installer::{AmentInstaller, install_targets_from_package};
+    use crate::ament_installer::{
+        AmentInstaller, install_targets_from_package, resolve_enabled_features,
+    };
     use cargo_metadata::MetadataCommand;
     use std::env;
 
@@ -199,6 +213,15 @@ pub fn install_to_ament(config: InstallConfig) -> Result<()> {
     // src/bin/*.rs binaries are included.
     let targets = install_targets_from_package(root_package);
 
+    // Resolve which features were active, so that targets gated behind
+    // features that were not enabled are skipped rather than reported missing.
+    let enabled_features = resolve_enabled_features(
+        &root_package.features,
+        &config.features,
+        config.no_default_features,
+        config.all_features,
+    );
+
     // Create installer
     let installer = AmentInstaller::new(
         config.install_base.clone(),
@@ -207,8 +230,10 @@ pub fn install_to_ament(config: InstallConfig) -> Result<()> {
         target_dir,
         config.verbose,
         config.profile.clone(),
-        targets,
-    );
+    )
+    .with_targets(targets)
+    .with_arch(config.arch.clone())
+    .with_enabled_features(enabled_features);
 
     // Run installation
     let result = installer.install();

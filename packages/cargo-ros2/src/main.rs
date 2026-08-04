@@ -58,6 +58,22 @@ enum Ros2Command {
         /// Build profile (debug or release)
         #[arg(long, default_value = "debug")]
         profile: String,
+
+        /// Target triple the build was compiled for (cross-compilation)
+        #[arg(long)]
+        target: Option<String>,
+
+        /// Features that were enabled during compilation
+        #[arg(long, value_delimiter = ',')]
+        features: Vec<String>,
+
+        /// The build ran with --no-default-features
+        #[arg(long)]
+        no_default_features: bool,
+
+        /// The build ran with --all-features
+        #[arg(long)]
+        all_features: bool,
     },
 
     /// Clean generated bindings and cache
@@ -92,6 +108,10 @@ fn main() -> Result<()> {
             install_base,
             build_base,
             profile,
+            target,
+            features,
+            no_default_features,
+            all_features,
         } => {
             // Default build_base to project_root if not provided
             let build_base = build_base.unwrap_or_else(|| project_root.clone());
@@ -102,6 +122,10 @@ fn main() -> Result<()> {
                 build_base,
                 profile,
                 verbose: args.verbose,
+                arch: target,
+                features,
+                no_default_features,
+                all_features,
             };
             cargo_ros2::install_to_ament(config)?;
             println!("✓ Package installed successfully");

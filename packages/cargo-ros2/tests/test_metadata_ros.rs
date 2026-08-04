@@ -60,7 +60,6 @@ install_to_share = ["launch", "config"]
         target_dir,
         false,
         "debug".to_string(),
-        Vec::new(),
     );
 
     // Run installation
@@ -129,7 +128,6 @@ install_to_include = ["include"]
         target_dir,
         false,
         "debug".to_string(),
-        Vec::new(),
     );
 
     // Run installation
@@ -197,7 +195,6 @@ install_to_lib = ["scripts"]
         target_dir,
         false,
         "debug".to_string(),
-        Vec::new(),
     );
 
     // Run installation
@@ -264,7 +261,6 @@ install_to_share = ["README.md"]
         target_dir,
         false,
         "debug".to_string(),
-        Vec::new(),
     );
 
     // Run installation
@@ -331,7 +327,6 @@ install_to_include = ["mylib.h"]
         target_dir,
         false,
         "debug".to_string(),
-        Vec::new(),
     );
 
     // Run installation
@@ -398,7 +393,6 @@ install_to_lib = ["setup.sh"]
         target_dir,
         false,
         "debug".to_string(),
-        Vec::new(),
     );
 
     // Run installation
@@ -470,7 +464,6 @@ install_to_share = ["launch", "config", "README.md", "LICENSE"]
         target_dir,
         false,
         "debug".to_string(),
-        Vec::new(),
     );
 
     // Run installation

@@ -203,7 +203,7 @@ When building a colcon workspace, `colcon-cargo-ros2`:
 
 1. **Discovers Packages**: Finds all ROS dependencies via ament index
 2. **Generates Bindings**: Creates Rust bindings in `build/<pkg>/rosidl_cargo/` for each interface package
-3. **Creates Config**: Generates `.cargo/config.toml` in each Cargo workspace/crate with `[patch.crates-io]` entries and `[build] rustflags` for linker search paths
+3. **Creates Config**: Generates `.cargo/config.toml` in each Cargo workspace/crate with `[patch.crates-io]` entries, `[build]` rustflags and target-dir, and `[env]` for build scripts
 4. **Builds**: Runs `cargo build` from workspace root (config is picked up automatically from `.cargo/config.toml`)
 5. **Installs**: Copies binaries and creates ament markers
 
@@ -220,6 +220,7 @@ ros2_ws/
 │   └── my_interfaces/
 │       └── rosidl_cargo/       # Rust bindings for custom interfaces
 │           └── my_interfaces/
+├── build/.cargo_target/        # Cargo build artifacts (shared, out of src/)
 ├── install/
 │   ├── my_robot_node/
 │   │   ├── lib/my_robot_node/  # Binaries
@@ -229,31 +230,60 @@ ros2_ws/
     ├── my_robot_node/
     │   ├── Cargo.toml
     │   ├── package.xml
+    │   ├── .gitignore          # Auto-generated (ignores .cargo/config.toml)
     │   └── .cargo/
-    │       └── config.toml     # Auto-generated (patches + rustflags)
+    │       └── config.toml     # Auto-generated (patches, flags, env, target-dir)
     └── my_interfaces/
 ```
 
-### IDE Support
+### Working with `cargo` Directly
 
-After `colcon build`, IDEs (RustRover, rust-analyzer, VS Code) can resolve all ROS message dependencies automatically. The extension generates `.cargo/config.toml` files with `[patch.crates-io]` and `[build] rustflags` in each Cargo workspace or standalone crate.
+After one `colcon build`, plain cargo commands work from any package directory with no flags and no sourced environment:
 
-This means `cargo metadata`, `cargo check`, `cargo build`, and IDE features (autocomplete, go-to-definition, type checking) all work without any extra flags.
+```bash
+cd src/my_robot_node
+cargo build
+cargo run
+cargo test
+cargo clippy
+```
+
+The generated `.cargo/config.toml` is what makes this work. It sits at the Cargo workspace root (or the crate root for standalone crates) and carries four things:
+
+| Section | Purpose |
+|---|---|
+| `[patch.crates-io]` | Resolves `std_msgs = "*"` to the generated crate under `build/` |
+| `[build] rustflags` | `-L` linker search paths, plus rpath entries so built binaries find ROS libraries at run time |
+| `[build] target-dir` | Puts cargo artifacts under `build/.cargo_target/`, keeping `src/` clean while colcon and manual cargo share one cache |
+| `[env]` | `AMENT_PREFIX_PATH` for generated build scripts, with `force = false` so a sourced environment still wins |
 
 **Key details**:
-- Config is placed at the Cargo workspace root (or crate root for standalone crates)
-- Contains `[patch.crates-io]` (dependency resolution) and `[build] rustflags` (linker search paths)
-- User entries in existing `.cargo/config.toml` files are preserved via comment-based markers
-- Patch paths are relative for portability; rustflags use absolute paths (required by Cargo)
-- Consider adding `.cargo/config.toml` to `.gitignore` (paths are machine-specific)
+- Adding a message dependency means editing **both** `package.xml` (`<depend>`) and `Cargo.toml`, then re-running `colcon build` — cargo alone cannot generate bindings
+- A Cargo workspace resolves as a unit, so one member's unresolvable dependency fails its siblings
+- User entries in an existing `.cargo/config.toml` are preserved via comment-based markers
+- The config is added to `.gitignore` automatically (its paths are machine-specific); opt out with `--no-gitignore`
+- rpath baking can be disabled with `--no-rpath`, after which binaries need a sourced ROS environment to run
+- A `target-dir` you set yourself is left alone
+
+When cargo reports something that does not match the above, run:
+
+```bash
+cargo ros2 doctor
+```
+
+It checks the ROS environment, the generated config, every patched crate directory, binding freshness, and `package.xml` declarations, then prints the fix for the first thing that is wrong. See [docs/troubleshooting.md](docs/troubleshooting.md) for the individual error messages.
+
+### IDE Support
+
+The same `.cargo/config.toml` makes IDEs (RustRover, rust-analyzer, VS Code) resolve all ROS message dependencies automatically — `cargo metadata` succeeds, so autocomplete, go-to-definition and type checking work without extra configuration.
 
 ### Benefits
 
 - **IDE Integration**: Full autocomplete and type checking for ROS message types
 - **Per-Package Organization**: Bindings follow ROS conventions (like `rosidl_cmake/`)
 - **Fast Builds**: Intelligent caching skips regeneration when possible
-- **Clean Workspace**: `colcon clean` removes all generated code
-- **Portable**: Patch paths are relative; consider `.gitignore`-ing `.cargo/config.toml` (rustflags contain absolute paths)
+- **Clean Workspace**: `colcon clean` removes all generated code; cargo artifacts never land in `src/`
+- **Portable**: Patch paths are relative, and the generated config is git-ignored for you (rustflags contain absolute paths)
 
 ## Advanced Features
 

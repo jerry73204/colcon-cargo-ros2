@@ -25,6 +25,69 @@ def find_cargo_executable():
     return shutil.which("cargo")
 
 
+def python_package_version(source_root=None):
+    """Version of the Python code being executed, or None if it cannot be read.
+
+    Prefers ``pyproject.toml`` from the source tree over installed distribution
+    metadata. Under an editable install the two disagree routinely -- the ``.pth``
+    runs the source tree while the recorded metadata is from whenever a wheel was
+    last installed -- and it is the source tree that is paired with the native
+    module built alongside it.
+
+    :param source_root: Directory holding pyproject.toml; defaults to the
+      package's own source root
+    """
+    if source_root is None:
+        source_root = Path(__file__).resolve().parents[3]
+
+    pyproject = Path(source_root) / "pyproject.toml"
+    if pyproject.is_file():
+        try:
+            try:
+                import tomllib
+            except ImportError:
+                import tomli as tomllib
+
+            with open(pyproject, "rb") as f:
+                version = tomllib.load(f).get("project", {}).get("version")
+            if version:
+                return version
+        except Exception:
+            pass
+
+    try:
+        from importlib.metadata import version as distribution_version
+
+        return distribution_version("colcon-cargo-ros2")
+    except Exception:
+        return None
+
+
+def check_version_skew(native_version, python_version):
+    """Report a mismatch between the Python code and the native module it calls.
+
+    The editable install layout makes this easy to hit: the ``.pth`` points at the
+    source tree, so Python changes take effect immediately while
+    ``cargo_ros2_py*.so`` stays whatever was last built. The symptom is a
+    ``TypeError`` about an unexpected keyword argument from deep inside the build,
+    which says nothing about rebuilding.
+
+    :returns: A message describing the mismatch, or None when the versions agree
+      or either is unknown (never fail a build over a version we cannot read)
+    """
+    if not native_version or not python_version:
+        return None
+    if native_version == python_version:
+        return None
+    return (
+        f"\n\ncargo_ros2_py {native_version} does not match "
+        f"colcon-cargo-ros2 {python_version}."
+        "\n\nThe bundled native module is out of date with the Python code calling"
+        " it. Rebuild it:"
+        "\n  $ just build-python && just install\n"
+    )
+
+
 def detect_cargo_features(cargo_args):
     """Parse the feature selection out of cargo arguments.
 
@@ -139,6 +202,17 @@ class AmentCargoBuildTask(TaskExtensionPoint):
             default=None,
             help="Override rosidl_runtime_rs version in generated bindings (default: 0.6)",
         )
+        parser.add_argument(
+            "--no-rpath",
+            action="store_true",
+            help="Do not bake ROS library directories into built binaries as an rpath. "
+            "Binaries then need LD_LIBRARY_PATH (i.e. a sourced ROS environment) to run.",
+        )
+        parser.add_argument(
+            "--no-gitignore",
+            action="store_true",
+            help="Do not add the generated .cargo/config.toml to .gitignore",
+        )
 
     async def build(self, *, additional_hooks=None):  # noqa: D102
         """Build the Rust ROS 2 package using workspace-level binding generation."""
@@ -187,8 +261,13 @@ class AmentCargoBuildTask(TaskExtensionPoint):
         # Check that cargo_ros2_py module is available
         try:
             # Quick check that the module loaded correctly
-            _ = cargo_ros2_py.__version__
-            logger.debug(f"cargo_ros2_py {cargo_ros2_py.__version__} loaded")
+            native_version = cargo_ros2_py.__version__
+            logger.debug(f"cargo_ros2_py {native_version} loaded")
+
+            skew = check_version_skew(native_version, python_package_version())
+            if skew:
+                logger.error(skew)
+                return 1
         except (ImportError, AttributeError) as e:
             logger.error(
                 f"\n\ncargo_ros2_py Rust bindings not found: {e}"

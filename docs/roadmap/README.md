@@ -24,7 +24,9 @@
 | Phase 4: colcon Integration & Release | 🔄 In Progress   | 3/6 subphases        | [View](../phases/004-integration.md) |
 | Phase 5: OMG IDL 4.2 Support          | ✅ Complete      | 4/4 subphases        | [View](../phases/005-idl-support.md) |
 | Phase 6: IDE Support                  | ✅ Complete      | 4/4 subphases        | [View](../phases/006-ide-support.md) |
-| Phase 7: cargo-ament-build Parity     | 📋 Not started   | 0/7 subphases        | [View](../phases/007-cargo-ament-build-parity.md) |
+| Phase 7: cargo-ament-build Parity     | ✅ Complete      | 7/7 subphases        | [View](../phases/007-cargo-ament-build-parity.md) |
+| Phase 8: Diagnosable Builds           | ✅ Complete      | 7/7 subphases        | [View](../phases/008-build-diagnostics.md) |
+| Phase 9: Manual `cargo` Workflow      | ✅ Complete      | 6/6 subphases        | [View](../phases/009-manual-cargo-workflow.md) |
 
 **Latest Achievement**: Phase 5 complete! 🎉 Full OMG IDL 4.2 support with lexer, parser, code generation, constant modules, @default annotations, and enums. Fixed constant module parsing order and RMW type path resolution. All 194 tests passing (100%)!
 

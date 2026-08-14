@@ -223,6 +223,137 @@ cargo ros2 cache clean
 cargo ros2 build
 ```
 
+### Start here: `cargo ros2 doctor`
+
+Most of the failures below are diagnosed in one command, run from the package directory:
+
+```bash
+cargo ros2 doctor
+```
+
+It walks the same chain cargo does — ROS environment, generated `.cargo/config.toml`, patch markers, patched crate directories, binding freshness, `package.xml` declarations — and stops at the first broken link with the fix for it. Exit status is non-zero when anything failed, so CI can gate on it.
+
+```
+✓ ROS environment: 1 prefixes on AMENT_PREFIX_PATH
+✓ Generated .cargo/config.toml: found at /ws/src/pkg_b/.cargo/config.toml
+✓ Patch section: generated markers present
+✓ Patched crates: 4 generated crates readable
+✓ Binding freshness: 4 crates match their interface definitions
+✗ package.xml declarations: used in Cargo.toml but not declared: sensor_msgs
+    Add to package.xml, then re-run `colcon build`:
+      <depend>sensor_msgs</depend>
+```
+
+### `cargo` reports a "yanked" version of a message crate
+
+**Symptoms**:
+
+```
+error: failed to select a version for the requirement `sensor_msgs = "*"`
+  version 4.2.3 is yanked
+location searched: crates.io index
+```
+
+**Cause**: no `[patch.crates-io]` entry exists for that package, so cargo looked it up on the real crates.io. The error names the registry, never the missing patch. Three things produce it:
+
+1. The package is used in `Cargo.toml` but has no `<depend>` tag in `package.xml`. Bindings are generated from `package.xml` only. `colcon build` warns about this by name before cargo fails — look one screen up.
+2. No `colcon build` has run yet in this workspace, so no `.cargo/config.toml` exists.
+3. The config was deleted or the crate was moved out of the workspace.
+
+**Solution**: declare the package in `package.xml` and re-run `colcon build`.
+
+```xml
+<depend>sensor_msgs</depend>
+```
+
+Note that a Cargo workspace resolves as a unit: one member's undeclared dependency fails every member.
+
+### `cargo` cannot read a generated crate under `build/`
+
+**Symptoms**:
+
+```
+unable to update /path/to/ws/build/std_msgs/rosidl_cargo/std_msgs
+failed to read /path/to/ws/build/std_msgs/rosidl_cargo/std_msgs/Cargo.toml
+```
+
+**Cause**: `build/` was cleaned while `.cargo/config.toml` still patched to it.
+
+**Solution**: re-run `colcon build`, which regenerates both.
+
+### Build script panics on `AMENT_PREFIX_PATH`
+
+**Symptoms**:
+
+```
+thread 'main' panicked at rosidl_runtime_rs-0.6.0/build.rs:
+AMENT_PREFIX_PATH environment variable not set - please source ROS 2 installation first.
+```
+
+**Cause**: the crate is being built without a generated `.cargo/config.toml` — its `[env]` section supplies `AMENT_PREFIX_PATH` for exactly this. Either no `colcon build` has run, or cargo is being invoked from outside the crate's directory tree, so the config is not discovered.
+
+**Solution**: run `colcon build` once, then invoke cargo from the package directory. Sourcing the ROS environment also works and takes precedence.
+
+### A binary cannot find ROS shared libraries at run time
+
+**Symptoms**:
+
+```
+error while loading shared libraries: libstd_msgs__rosidl_typesupport_c.so:
+cannot open shared object file: No such file or directory
+```
+
+**Cause**: the binary carries no rpath. This is expected if the workspace was built with `--no-rpath`, or if the binary predates that support.
+
+**Solution**: source the workspace (`source install/setup.bash`), or rebuild without `--no-rpath` so library directories are baked in.
+
+### Bindings are out of date
+
+**Symptoms**:
+
+```
+Rust bindings for `my_msgs` are out of date: the interface definitions in
+/ws/src/my_msgs have changed since they were generated.
+Re-run `colcon build` to regenerate them, or set
+COLCON_CARGO_ROS2_SKIP_STAMP_CHECK=1 to build anyway.
+```
+
+**Cause**: a `.msg`/`.srv`/`.action` file changed after the bindings were generated. `colcon build` regenerates on change, but a plain `cargo build` would otherwise compile against the previous generation — and the mismatch would surface much later as an error inside *your* code (`no field 'sequence_id' on type 'Reading'`) that names nothing responsible.
+
+**Solution**: `colcon build`. To build against the old bindings anyway (e.g. bisecting), set `COLCON_CARGO_ROS2_SKIP_STAMP_CHECK=1`.
+
+### `unable to find library -l<package>__rosidl_typesupport_c`
+
+**Symptoms**:
+
+```
+rust-lld: error: unable to find library -lsplat_msgs__rosidl_typesupport_c
+```
+
+**Cause**: the linker search path has no entry for the package's `lib/` directory. For a workspace-local interface package that means it has not been built and installed yet, so `install/<pkg>/lib` did not exist when the config was written.
+
+**Solution**: build the interface package first (`colcon build --packages-select <pkg>`), then build the workspace. Check the result with `cargo ros2 doctor`; the `-L` entries live in the `[build]` block of the generated `.cargo/config.toml`.
+
+### `InstallConfig.__new__() got an unexpected keyword argument`
+
+**Symptoms**:
+
+```
+TypeError: InstallConfig.__new__() got an unexpected keyword argument 'arch'
+```
+or:
+```
+cargo_ros2_py 0.4.0 does not match colcon-cargo-ros2 0.4.1.
+```
+
+**Cause**: the bundled native module is older than the Python code calling it. Common with an editable install, where the `.pth` runs the source tree while `cargo_ros2_py*.so` stays whatever was last built.
+
+**Solution**:
+
+```bash
+just build-python && just install
+```
+
 ---
 
 ## Cache Problems

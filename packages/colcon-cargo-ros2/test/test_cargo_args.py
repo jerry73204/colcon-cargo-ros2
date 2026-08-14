@@ -49,9 +49,7 @@ class TestDetectCargoFeatures:
         assert detect_cargo_features(["-F", "extra"]) == (["extra"], False, False)
 
     def test_repeated_flags_accumulate(self):
-        features, _, _ = detect_cargo_features(
-            ["--features", "a", "--features=b", "-F", "c"]
-        )
+        features, _, _ = detect_cargo_features(["--features", "a", "--features=b", "-F", "c"])
         assert features == ["a", "b", "c"]
 
     def test_duplicates_are_collapsed(self):

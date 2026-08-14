@@ -424,6 +424,62 @@ Ensures:
 
 ## Recent Architectural Improvements
 
+### Diagnosable Builds — Phase 8 (2026-08-14)
+
+**Problem**: A missing `[patch.crates-io]` entry is not an error to cargo — it resolves the name on the real crates.io, where ROS message crates exist as yanked uploads. Every such failure was reported as `version 4.2.3 is yanked`, naming a registry the user never asked for.
+
+**Solution**:
+
+| Subphase | Change |
+|---|---|
+| 8.1 | Warn when a Cargo.toml interface dep has no `<depend>` tag (the old check could never fire — see below) |
+| 8.2 | `_cargo_dependency_names()` follows renames (`package = "..."`), `[target.*]` tables and `workspace = true` |
+| 8.3 | Bindings with no `Cargo.toml` are regenerated, never patched to |
+| 8.4 | `.bindgen_manifest` in each generated crate; its `build.rs` refuses to compile stale bindings |
+| 8.5 | Python/native version-skew guard with the rebuild command |
+| 8.6 | `cargo ros2 doctor` — six ordered checks, fix printed for the first failure, exit 1 |
+| 8.7 | Troubleshooting catalogue keyed by the misleading message |
+
+**Non-obvious findings**:
+- The pre-existing check compared Cargo.toml deps against packages discovered *from package.xml*, so an undeclared package — the only case that breaks builds — was by construction invisible to it. Detection needs independent resolution (source tree, then ament index). `doctor` has the same trap and resolves it the same way.
+- Cargo resolves relative `.cargo/config.toml` paths against the directory *containing* `.cargo`. Resolving against `.cargo` reports every patched crate missing.
+- Generated crates have no dependencies, so `build.rs` compares record *sets* (`path:size:mtime_ns`) rather than a hash. `_interface_records()` feeds both that manifest and colcon's sha256 stamp.
+- Version skew compares `pyproject.toml` (source tree), not `dist-info`: under an editable install the recorded metadata is routinely stale.
+
+**Escape hatches**: `COLCON_CARGO_ROS2_SKIP_STAMP_CHECK=1` skips the freshness check; a missing manifest or unreadable source directory skips it too.
+
+**Files**: `colcon_cargo_ros2/workspace_bindgen.py`, `task/ament_cargo/build.py`, `packages/cargo-ros2/src/doctor.rs` (new), `packages/rosidl-bindgen/src/generator.rs`, `docs/troubleshooting.md`.
+
+**Tests**: `test/test_phase8_diagnostics.py`, `test/test_dependency_validation.py`, 10 tests in `doctor.rs`, and a generator test that compiles the emitted `build.rs` with `rustc`.
+
+---
+
+### First-Class Manual `cargo` Workflow — Phase 9 (2026-08-14)
+
+**Problem**: After `colcon build`, a bare `cargo build` still needed a sourced ROS environment, `cargo run` failed to find ROS shared libraries, and both `.cargo/config.toml` and cargo's `target/` sat in the user's source tree.
+
+**Solution**: The generated `.cargo/config.toml` now carries four regions instead of two:
+
+| Section | Added by | Purpose |
+|---|---|---|
+| `[patch.crates-io]` | Phase 6 | Dependency resolution |
+| `[build] rustflags` | Phase 6 | `-L` search paths, now narrowed per Cargo target, plus rpath link args |
+| `[build] target-dir` | 9.4 | Artifacts under `build/.cargo_target/<slug>`, out of `src/` |
+| `[env]` | 9.1 | `AMENT_PREFIX_PATH` for build scripts, `force = false` |
+
+**Non-obvious findings** (each verified on a fixture workspace):
+- Cargo **overwrites** `LD_LIBRARY_PATH` for `cargo run`, so `[env]` cannot fix runtime library lookup — rpath must.
+- `-Wl,-rpath` alone emits `RUNPATH`, which the loader does not apply to *transitive* libraries; ROS typesupport is exactly that, so `--disable-new-dtags` (real `RPATH`) is required on Linux.
+- `install_to_ament()` takes its artifact directory from `cargo metadata`'s `target_directory`, which already honors `[build] target-dir` — redirecting the config redirects installation, no Rust change needed.
+
+**New CLI flags**: `--no-rpath`, `--no-gitignore`.
+
+**Files Modified**: `colcon_cargo_ros2/workspace_bindgen.py` (`_merge_section()` now backs all three marker regions), `task/ament_cargo/build.py`, `README.md`, `docs/troubleshooting.md`, `docs/phases/009-manual-cargo-workflow.md`.
+
+**Tests**: `test/test_manual_cargo.py` (29 tests) plus updated `TestComputeRustflags`.
+
+---
+
 ### Consolidated `.cargo/config.toml` (2026-03-02)
 
 **Problem**: Two config files were generated — `build/ros2_cargo_config.toml` (patches + rustflags, passed via `--config`) and per-crate `.cargo/config.toml` (patches only, for IDEs). This was redundant.

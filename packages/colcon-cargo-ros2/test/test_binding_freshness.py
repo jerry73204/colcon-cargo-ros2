@@ -30,9 +30,7 @@ import pytest
 try:  # pragma: no cover - depends on how the suite is invoked
     from colcon_cargo_ros2 import cargo_ros2_py  # noqa: F401
 except ImportError:  # pragma: no cover
-    sys.modules.setdefault(
-        "colcon_cargo_ros2.cargo_ros2_py", types.ModuleType("cargo_ros2_py")
-    )
+    sys.modules.setdefault("colcon_cargo_ros2.cargo_ros2_py", types.ModuleType("cargo_ros2_py"))
 
 from colcon_cargo_ros2.workspace_bindgen import (  # noqa: E402
     STAMP_FILENAME,
@@ -105,9 +103,7 @@ def test_stamp_changes_when_a_definition_is_removed(tmp_path):
 
 
 def test_stamp_covers_services_as_well_as_messages(tmp_path):
-    share = _make_pkg(
-        tmp_path / "pkg", msgs={"A.msg": "int32 x\n"}, srvs={"S.srv": "---\n"}
-    )
+    share = _make_pkg(tmp_path / "pkg", msgs={"A.msg": "int32 x\n"}, srvs={"S.srv": "---\n"})
     before = _stamp(share)
     _touch_distinct(share / "srv" / "S.srv", "int32 req\n---\nint32 resp\n")
     assert _stamp(share) != before
@@ -150,9 +146,7 @@ def test_stamp_matches_after_write(tmp_path):
 
 def test_missing_stamp_is_stale(tmp_path):
     """Bindings generated before stamping existed must be regenerated once."""
-    assert not WorkspaceBindingGenerator._stamp_matches(
-        tmp_path / STAMP_FILENAME, "abc123"
-    )
+    assert not WorkspaceBindingGenerator._stamp_matches(tmp_path / STAMP_FILENAME, "abc123")
 
 
 def test_different_stamp_is_stale(tmp_path):

@@ -572,20 +572,29 @@ class TestWriteCargoConfigs:
 # ---------------------------------------------------------------------------
 
 
-class TestComputeRustflags:
-    def test_from_install_base(self, tmp_path):
-        """Collects -L flags from install base lib dirs."""
-        gen = _make_generator(tmp_path)
-        # Create install/<pkg>/lib/ directories
-        (tmp_path / "install" / "pkg_a" / "lib").mkdir(parents=True)
-        (tmp_path / "install" / "pkg_b" / "lib").mkdir(parents=True)
+def _installed_lib(root: Path, pkg: str) -> Path:
+    """Create ``install/<pkg>/lib`` holding one library file."""
+    lib = root / "install" / pkg / "lib"
+    lib.mkdir(parents=True, exist_ok=True)
+    (lib / f"lib{pkg}.so").write_text("elf")
+    return lib
 
-        flags = gen._compute_rustflags()
-        assert len(flags) >= 2
-        assert any("pkg_a" in f for f in flags)
-        assert any("pkg_b" in f for f in flags)
+
+class TestComputeRustflags:
+    def test_from_install_base(self, tmp_path, monkeypatch):
+        """Collects -L flags from install base lib dirs."""
+        monkeypatch.delenv("AMENT_PREFIX_PATH", raising=False)
+        gen = _make_generator(tmp_path)
+        _installed_lib(tmp_path, "pkg_a")
+        _installed_lib(tmp_path, "pkg_b")
+
+        flags = gen._compute_rustflags(None)
+        search_flags = [f for f in flags if f.startswith('"-L"')]
+        assert len(search_flags) == 2
+        assert any("pkg_a" in f for f in search_flags)
+        assert any("pkg_b" in f for f in search_flags)
         # All flags should use absolute paths
-        for f in flags:
+        for f in search_flags:
             assert "native=/" in f or "native=\\" in f
 
     def test_from_ament_prefix_path(self, tmp_path, monkeypatch):
@@ -593,9 +602,10 @@ class TestComputeRustflags:
         gen = _make_generator(tmp_path)
         ros_prefix = tmp_path / "opt" / "ros" / "jazzy"
         (ros_prefix / "lib").mkdir(parents=True)
+        (ros_prefix / "lib" / "librcl.so").write_text("elf")
         monkeypatch.setenv("AMENT_PREFIX_PATH", str(ros_prefix))
 
-        flags = gen._compute_rustflags()
+        flags = gen._compute_rustflags(None)
         assert any("jazzy" in f for f in flags)
 
     def test_empty_when_nothing_exists(self, tmp_path, monkeypatch):
@@ -603,7 +613,7 @@ class TestComputeRustflags:
         gen = _make_generator(tmp_path)
         monkeypatch.delenv("AMENT_PREFIX_PATH", raising=False)
 
-        flags = gen._compute_rustflags()
+        flags = gen._compute_rustflags(None)
         assert flags == []
 
     def test_skips_non_directories(self, tmp_path, monkeypatch):
@@ -613,11 +623,12 @@ class TestComputeRustflags:
         install = tmp_path / "install"
         install.mkdir(exist_ok=True)
         (install / "some_file.txt").write_text("not a dir")
-        (install / "real_pkg" / "lib").mkdir(parents=True)
+        _installed_lib(tmp_path, "real_pkg")
 
-        flags = gen._compute_rustflags()
-        assert len(flags) == 1
-        assert "real_pkg" in flags[0]
+        flags = gen._compute_rustflags(None)
+        search_flags = [f for f in flags if f.startswith('"-L"')]
+        assert len(search_flags) == 1
+        assert "real_pkg" in search_flags[0]
 
 
 # ---------------------------------------------------------------------------

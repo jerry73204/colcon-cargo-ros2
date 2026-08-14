@@ -78,6 +78,13 @@ enum Ros2Command {
 
     /// Clean generated bindings and cache
     Clean,
+
+    /// Diagnose why a plain `cargo` invocation fails in this workspace
+    Doctor {
+        /// Crate directory to diagnose (defaults to the current directory)
+        #[arg(long)]
+        path: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -134,6 +141,15 @@ fn main() -> Result<()> {
         Ros2Command::Clean => {
             cargo_ros2::clean_bindings(&project_root, args.verbose)?;
             println!("✓ Cleaned bindings and cache!");
+        }
+
+        Ros2Command::Doctor { path } => {
+            let crate_dir = path.unwrap_or(project_root);
+            if !cargo_ros2::doctor::run(&crate_dir)? {
+                // Exit non-zero so scripts and CI can gate on a healthy workspace.
+                std::process::exit(1);
+            }
+            println!("✓ Workspace looks healthy");
         }
     }
 

@@ -721,6 +721,9 @@ serde = {{ version = "1.0", features = ["derive"], optional = true }}
 fn generate_build_rs(output_dir: &Path, package_name: &str) -> Result<()> {
     let build_rs = format!(
         r#"fn main() {{
+    // Refuse to build against bindings whose definitions have moved on
+    check_bindings_fresh();
+
     // Add ROS library search paths from AMENT_PREFIX_PATH (for system packages)
     if let Ok(ament_prefix_path) = std::env::var("AMENT_PREFIX_PATH") {{
         for prefix in ament_prefix_path.split(':') {{
@@ -765,6 +768,105 @@ fn generate_build_rs(output_dir: &Path, package_name: &str) -> Result<()> {
     // Link against ROS 2 C libraries
     println!("cargo:rustc-link-lib={package}__rosidl_typesupport_c");
     println!("cargo:rustc-link-lib={package}__rosidl_generator_c");
+}}
+
+/// Fail the build when these bindings no longer match the .msg/.srv/.action
+/// files they were generated from.
+///
+/// `colcon build` regenerates on change, but a plain `cargo build` never
+/// consults its records, so a stale crate compiles happily and the mismatch
+/// surfaces much later as an error inside *consumer* code ("no field `pid` on
+/// type `ComponentEvent`") that names nothing responsible.
+///
+/// `.bindgen_manifest` is written by colcon-cargo-ros2 next to this build
+/// script: first line the interface directory, then one `path:size:mtime_ns`
+/// record per definition. No manifest, no readable source directory, or
+/// COLCON_CARGO_ROS2_SKIP_STAMP_CHECK set means the check is skipped rather
+/// than failed -- it must never block a build it cannot judge.
+fn check_bindings_fresh() {{
+    if std::env::var_os("COLCON_CARGO_ROS2_SKIP_STAMP_CHECK").is_some() {{
+        return;
+    }}
+
+    let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") else {{
+        return;
+    }};
+    let manifest_path = std::path::Path::new(&manifest_dir).join(".bindgen_manifest");
+    println!("cargo:rerun-if-changed={{}}", manifest_path.display());
+
+    let Ok(content) = std::fs::read_to_string(&manifest_path) else {{
+        return;
+    }};
+    let mut lines = content.lines();
+    let Some(source_dir) = lines.next().filter(|line| !line.is_empty()) else {{
+        return;
+    }};
+    let source_dir = std::path::Path::new(source_dir);
+    if !source_dir.is_dir() {{
+        return;
+    }}
+
+    let recorded: std::collections::BTreeSet<String> =
+        lines.filter(|line| !line.is_empty()).map(str::to_string).collect();
+
+    let mut current = std::collections::BTreeSet::new();
+    for subdir in ["msg", "srv", "action"] {{
+        let root = source_dir.join(subdir);
+        if root.is_dir() {{
+            println!("cargo:rerun-if-changed={{}}", root.display());
+            collect_interface_records(&root, source_dir, &mut current);
+        }}
+    }}
+
+    if current != recorded {{
+        panic!(
+            "Rust bindings for `{package}` are out of date: the interface \
+             definitions in {{}} have changed since they were generated.\n\
+             Re-run `colcon build` to regenerate them, or set \
+             COLCON_CARGO_ROS2_SKIP_STAMP_CHECK=1 to build anyway.",
+            source_dir.display()
+        );
+    }}
+}}
+
+/// Record every definition file under `dir` as `relative/path:size:mtime_ns`.
+fn collect_interface_records(
+    dir: &std::path::Path,
+    base: &std::path::Path,
+    out: &mut std::collections::BTreeSet<String>,
+) {{
+    let Ok(entries) = std::fs::read_dir(dir) else {{
+        return;
+    }};
+    for entry in entries.flatten() {{
+        let path = entry.path();
+        if path.is_dir() {{
+            collect_interface_records(&path, base, out);
+            continue;
+        }}
+        let is_definition = matches!(
+            path.extension().and_then(|ext| ext.to_str()),
+            Some("msg") | Some("srv") | Some("action") | Some("idl")
+        );
+        if !is_definition {{
+            continue;
+        }}
+        let (Ok(metadata), Ok(relative)) = (entry.metadata(), path.strip_prefix(base)) else {{
+            continue;
+        }};
+        let Ok(modified) = metadata.modified() else {{
+            continue;
+        }};
+        let Ok(since_epoch) = modified.duration_since(std::time::UNIX_EPOCH) else {{
+            continue;
+        }};
+        out.insert(format!(
+            "{{}}:{{}}:{{}}",
+            relative.display(),
+            metadata.len(),
+            since_epoch.as_nanos()
+        ));
+    }}
 }}
 "#,
         package = package_name
@@ -901,6 +1003,49 @@ mod tests {
         let build_rs = std::fs::read_to_string(temp_dir.path().join("build.rs")).unwrap();
         assert!(build_rs.contains("test_pkg__rosidl_typesupport_c"));
         assert!(build_rs.contains("test_pkg__rosidl_generator_c"));
+    }
+
+    #[test]
+    fn test_build_rs_checks_binding_freshness() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        generate_build_rs(temp_dir.path(), "test_pkg").unwrap();
+
+        let build_rs = std::fs::read_to_string(temp_dir.path().join("build.rs")).unwrap();
+        assert!(build_rs.contains("check_bindings_fresh()"));
+        assert!(build_rs.contains(".bindgen_manifest"));
+        assert!(build_rs.contains("COLCON_CARGO_ROS2_SKIP_STAMP_CHECK"));
+        // The panic must name the package and the way out.
+        assert!(build_rs.contains("bindings for `test_pkg` are out of date"));
+        assert!(build_rs.contains("Re-run `colcon build`"));
+    }
+
+    /// The generated build script has to compile, and no test above would notice
+    /// a syntax error in it -- the wheel ships it as text.
+    #[test]
+    fn test_build_rs_compiles() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        generate_build_rs(temp_dir.path(), "test_pkg").unwrap();
+
+        let output = std::process::Command::new("rustc")
+            .arg("--edition")
+            .arg("2021")
+            .arg("--emit=metadata")
+            .arg("--crate-type")
+            .arg("bin")
+            .arg("-o")
+            .arg(temp_dir.path().join("build_rs_check"))
+            .arg(temp_dir.path().join("build.rs"))
+            .output();
+
+        let Ok(output) = output else {
+            // No rustc on PATH (unlikely here, but not worth failing over).
+            return;
+        };
+        assert!(
+            output.status.success(),
+            "generated build.rs does not compile:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]

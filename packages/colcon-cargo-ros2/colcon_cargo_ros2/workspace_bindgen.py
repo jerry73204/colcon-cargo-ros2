@@ -16,8 +16,9 @@ Architecture:
 import fcntl
 import hashlib
 import os
-import re
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -33,8 +34,97 @@ logger = colcon_logger.getChild(__name__)
 # "already generated" from "still current".
 STAMP_FILENAME = ".bindgen_stamp"
 
+# Written inside each generated crate: the interface directory it came from,
+# followed by one record per definition file. The crate's own build.rs re-derives
+# these records and refuses to compile when they no longer match, which is what
+# a plain `cargo build` needs -- it never consults the stamp above.
+MANIFEST_FILENAME = ".bindgen_manifest"
+
 # Interface definition suffixes whose content affects the generated crate.
 INTERFACE_SUFFIXES = (".msg", ".srv", ".action", ".idl")
+
+# Subdirectories whose presence marks a package as an interface package.
+INTERFACE_SUBDIRS = ("msg", "srv", "action")
+
+# Dependency mismatches already reported, so the user reads each one once.
+# Binding generation reruns for every package build task in a build, which
+# would otherwise repeat every warning once per Cargo package in the workspace.
+_REPORTED_MISMATCHES: Set[str] = set()
+
+
+def _package_share_directory(pkg_name: str) -> Optional[Path]:
+    """Locate an installed package's share directory, or None if not found."""
+    from ament_index_python.packages import get_package_share_directory
+
+    try:
+        return Path(get_package_share_directory(pkg_name))
+    except Exception:
+        return None
+
+
+def _has_interface_definitions(pkg_dir: Path) -> bool:
+    """True when *pkg_dir* holds msg/, srv/ or action/ definitions."""
+    return any((pkg_dir / subdir).exists() for subdir in INTERFACE_SUBDIRS)
+
+
+def _git_succeeds(args: List[str], cwd: Path) -> bool:
+    """Run a git command in *cwd*, reporting whether it exited successfully."""
+    try:
+        result = subprocess.run(
+            ["git"] + args,
+            cwd=str(cwd),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def _warn_once(key: str, message: str):
+    """Log *message* as a warning the first time *key* is seen in this process."""
+    if key in _REPORTED_MISMATCHES:
+        return
+    _REPORTED_MISMATCHES.add(key)
+    logger.warning(message)
+
+
+def _read_toml(path: Path) -> Dict:
+    """Parse a TOML file, returning an empty mapping when it cannot be read."""
+    try:
+        try:
+            import tomllib
+        except ImportError:
+            import tomli as tomllib  # type: ignore[no-redef]
+
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except Exception:
+        return {}
+
+
+def _dependency_tables(manifest: Dict):
+    """Yield every dependency table a Cargo manifest can declare.
+
+    Includes the platform-specific ``[target.<cfg>.*]`` tables, which carry real
+    dependencies that a scan of the top-level tables alone would miss.
+    """
+    kinds = ("dependencies", "build-dependencies", "dev-dependencies")
+    for kind in kinds:
+        table = manifest.get(kind)
+        if isinstance(table, dict):
+            yield table
+
+    targets = manifest.get("target")
+    if isinstance(targets, dict):
+        for target_table in targets.values():
+            if not isinstance(target_table, dict):
+                continue
+            for kind in kinds:
+                table = target_table.get(kind)
+                if isinstance(table, dict):
+                    yield table
 
 
 def _cargo_toml_has_workspace(cargo_toml_path: Path) -> bool:
@@ -45,17 +135,7 @@ def _cargo_toml_has_workspace(cargo_toml_path: Path) -> bool:
     """
     if not cargo_toml_path.exists():
         return False
-    try:
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib  # type: ignore[no-redef]
-
-        with open(cargo_toml_path, "rb") as f:
-            data = tomllib.load(f)
-        return "workspace" in data
-    except Exception:
-        return False
+    return "workspace" in _read_toml(cargo_toml_path)
 
 
 class WorkspaceBindingGenerator:
@@ -86,6 +166,12 @@ class WorkspaceBindingGenerator:
         # (transitively). Empty until _discover_ros_packages() has run; callers
         # must treat "absent" as "unknown", never as "needs nothing".
         self._package_interface_deps: Dict[str, Set[str]] = {}
+
+        # colcon Cargo package name -> every package it depends on transitively,
+        # interface or not. Linker search paths come from this rather than from
+        # the interface subset: a crate may link a C library from any ROS package
+        # it declares. Same "absent means unknown" rule.
+        self._package_all_deps: Dict[str, Set[str]] = {}
 
     def try_acquire_lock(self) -> bool:
         """Try to acquire the binding generation lock.
@@ -236,10 +322,19 @@ class WorkspaceBindingGenerator:
         # Step 5: Narrow the per-package attribution to interface packages, using
         # the dependency edges recorded during the walks above.
         interface_names = set(interface_packages)
-        attribution = {
-            pkg_name: self._transitive_closure(direct) & interface_names
+        closures = {
+            pkg_name: self._transitive_closure(direct)
             for pkg_name, direct in direct_deps_by_package.items()
         }
+        attribution = {
+            pkg_name: closure & interface_names for pkg_name, closure in closures.items()
+        }
+
+        # The unfiltered closures drive linker search paths, which are not limited
+        # to interface packages. Unlike the patch attribution below, an incomplete
+        # entry here costs an extra -L, never a missing one, so it needs no
+        # all-or-nothing fallback.
+        self._package_all_deps = closures
 
         # Every package being generated should be claimed by at least one Cargo
         # package, because that is how it entered the required set in the first
@@ -282,11 +377,86 @@ class WorkspaceBindingGenerator:
                     queue.append(dep)
         return reached
 
+    def _looks_like_interface_package(self, pkg_name: str) -> bool:
+        """True when *pkg_name* names a ROS interface package.
+
+        Checks the colcon workspace source tree first, because a workspace-local
+        messages package is not in the ament index until it has been installed,
+        then falls back to installed packages.
+        """
+        from colcon_cargo_ros2.package_augmentation import RustBindingAugmentation
+
+        all_descriptors = getattr(RustBindingAugmentation, "_all_descriptors", set())
+        for desc in all_descriptors:
+            if desc.name == pkg_name:
+                return _has_interface_definitions(Path(desc.path))
+
+        pkg_share = _package_share_directory(pkg_name)
+        if pkg_share is None:
+            return False
+        return _has_interface_definitions(pkg_share)
+
+    @staticmethod
+    def _cargo_dependency_names(
+        cargo_toml_path: Path, cargo_workspace_root: Optional[Path] = None
+    ) -> Set[str]:
+        """Every package name *cargo_toml_path* depends on, in any form.
+
+        Reading the table keys alone misses three forms, each of which hides a
+        missing ``<depend>`` tag from validation:
+
+        - ``msgs = { package = "sensor_msgs" }`` -- the key is the rename, the
+          package name is in ``package``
+        - ``[target.'cfg(unix)'.dependencies]`` -- a whole extra set of tables
+        - ``sensor_msgs = { workspace = true }`` -- the requirement lives in the
+          Cargo workspace root's ``[workspace.dependencies]``
+
+        Args:
+            cargo_toml_path: Manifest to read.
+            cargo_workspace_root: Directory holding the Cargo workspace manifest,
+                needed only to resolve ``workspace = true`` entries.
+        """
+        data = _read_toml(cargo_toml_path)
+        if not data:
+            return set()
+
+        inherited: Dict[str, object] = {}
+        if cargo_workspace_root is not None:
+            root_manifest = cargo_workspace_root / "Cargo.toml"
+            if root_manifest != cargo_toml_path:
+                root_data = _read_toml(root_manifest)
+            else:
+                root_data = data
+            workspace_table = root_data.get("workspace", {})
+            if isinstance(workspace_table, dict):
+                inherited = workspace_table.get("dependencies", {}) or {}
+
+        def resolve(key: str, spec) -> str:
+            if isinstance(spec, dict):
+                if spec.get("workspace") is True:
+                    parent = inherited.get(key)
+                    if isinstance(parent, dict):
+                        return parent.get("package", key)
+                return spec.get("package", key)
+            return key
+
+        names: Set[str] = set()
+        for table in _dependency_tables(data):
+            for key, spec in table.items():
+                names.add(resolve(key, spec))
+        return names
+
     def _validate_cargo_dependencies(self, interface_packages: Dict[str, Path]):
         """Validate that Cargo.toml dependencies match package.xml interface packages.
 
-        Prints warnings if there are mismatches between what's declared in package.xml
-        and what's actually used in Cargo.toml.
+        Warns about mismatches in both directions. The one that matters is an
+        interface package used in Cargo.toml but never declared in package.xml:
+        package.xml is the only source of binding generation, so that package gets
+        no bindings and no ``[patch.crates-io]`` entry, cargo resolves the name
+        against the real crates.io, and the build dies with an error that names
+        crates.io rather than the missing ``<depend>`` tag -- e.g.
+        ``failed to select a version for the requirement `sensor_msgs = "*"` ...
+        version 4.2.3 is yanked``.
 
         Args:
             interface_packages: Dict of discovered interface packages from package.xml
@@ -304,43 +474,47 @@ class WorkspaceBindingGenerator:
                 continue
 
             try:
-                # Parse Cargo.toml to extract dependencies
-                # Use tomllib (Python 3.11+) or tomli (Python 3.8-3.10)
-                try:
-                    import tomllib
-                except ImportError:
-                    import tomli as tomllib
+                cargo_deps = self._cargo_dependency_names(
+                    cargo_toml_path,
+                    self._detect_cargo_workspace_root(pkg_path, self.workspace_root),
+                )
 
-                with open(cargo_toml_path, "rb") as f:
-                    cargo_data = tomllib.load(f)
-
-                # Get all dependencies from Cargo.toml (regular + build-dependencies)
-                cargo_deps = set()
-                if "dependencies" in cargo_data:
-                    cargo_deps.update(cargo_data["dependencies"].keys())
-                if "build-dependencies" in cargo_data:
-                    cargo_deps.update(cargo_data["build-dependencies"].keys())
-
-                # Get interface packages from package.xml
+                # Get dependencies from package.xml
                 xml_deps = desc.get_dependencies(categories=["build", "run"])
-                xml_interface_deps = set(d.name for d in xml_deps if d.name in interface_packages)
+                xml_dep_names = set(d.name for d in xml_deps)
+                xml_interface_deps = xml_dep_names & set(interface_packages)
 
                 # Check for interface packages in package.xml but not in Cargo.toml
                 missing_in_cargo = xml_interface_deps - cargo_deps
                 if missing_in_cargo:
-                    logger.warning(
-                        f"{pkg_name}: Interface packages in package.xml but not in Cargo.toml: "
-                        f"{', '.join(sorted(missing_in_cargo))}"
+                    names = ", ".join(sorted(missing_in_cargo))
+                    _warn_once(
+                        f"{pkg_name}:missing-in-cargo:{names}",
+                        f"{pkg_name}: declared in package.xml but not used in Cargo.toml: "
+                        f"{names}. Bindings are generated for them regardless; drop the "
+                        "<depend> tags if they are not needed.",
                     )
 
-                # Check for ROS packages in Cargo.toml but not in package.xml
-                # (Only check packages that we generated bindings for)
-                extra_in_cargo = cargo_deps & set(interface_packages.keys()) - xml_interface_deps
-                if extra_in_cargo:
-                    logger.warning(
-                        f"{pkg_name}: Interface packages in Cargo.toml but not in package.xml: "
-                        f"{', '.join(sorted(extra_in_cargo))}. "
-                        "Add them to package.xml with <depend> tags."
+                # Check for interface packages in Cargo.toml but not in package.xml.
+                # Resolving each unknown dependency name matters here: an undeclared
+                # package is by definition absent from interface_packages, which is
+                # exactly why the old check could never see the case that breaks the
+                # build.
+                undeclared = {
+                    dep
+                    for dep in cargo_deps - xml_dep_names
+                    if dep in interface_packages or self._looks_like_interface_package(dep)
+                }
+                if undeclared:
+                    names = ", ".join(sorted(undeclared))
+                    tags = "\n".join(f"    <depend>{dep}</depend>" for dep in sorted(undeclared))
+                    _warn_once(
+                        f"{pkg_name}:undeclared:{names}",
+                        f"{pkg_name}: ROS interface packages are used in Cargo.toml but "
+                        f"not declared in package.xml: {names}.\n"
+                        "  No bindings are generated for them, so cargo will look them up "
+                        "on crates.io and fail with an unrelated version or 'yanked' error.\n"
+                        f"  Add to {pkg_name}/package.xml:\n{tags}",
                     )
 
             except Exception as e:
@@ -604,7 +778,10 @@ class WorkspaceBindingGenerator:
             stamp = self._interface_stamp(pkg_share)
 
             if binding_dir.exists():
-                if self._stamp_matches(stamp_file, stamp):
+                # A matching stamp beside a crate that lost its Cargo.toml is not
+                # "up to date": cargo would resolve the patch to a directory it
+                # cannot read, and report that against crates.io rather than here.
+                if self._stamp_matches(stamp_file, stamp) and (binding_dir / "Cargo.toml").exists():
                     logger.debug(f"Bindings up to date for {pkg_name}")
                     continue
                 # Remove rather than regenerate in place: bindgen does not
@@ -627,18 +804,22 @@ class WorkspaceBindingGenerator:
                 logger.warning(f"Skipping {pkg_name}: {e}")
             else:
                 self._write_stamp(stamp_file, stamp)
+                self._write_manifest(binding_dir, pkg_share)
 
     @staticmethod
-    def _interface_stamp(pkg_share: Path) -> str:
-        """Digest of a package's interface definitions.
+    def _interface_records(pkg_share: Path) -> str:
+        """One line per interface definition: ``<relative path>:<size>:<mtime_ns>``.
 
-        Covers path, size and mtime of every .msg/.srv/.action/.idl under the
-        package's share directory. Size+mtime rather than content keeps this
-        cheap on large interface sets, and matches how colcon detects changes
-        elsewhere; the cost of a false "unchanged" is bounded by mtime
-        granularity, whereas the cost of a false "changed" is only a rebuild.
+        Size+mtime rather than content keeps this cheap on large interface sets,
+        and matches how colcon detects changes elsewhere; the cost of a false
+        "unchanged" is bounded by mtime granularity, whereas the cost of a false
+        "changed" is only a rebuild.
+
+        This text is the single source for both freshness checks: colcon compares
+        its digest (:meth:`_interface_stamp`), and a generated crate's build.rs
+        re-derives the same lines from the manifest written beside it.
         """
-        digest = hashlib.sha256()
+        lines: List[str] = []
         for subdir in ("msg", "srv", "action"):
             root = pkg_share / subdir
             if not root.is_dir():
@@ -648,8 +829,32 @@ class WorkspaceBindingGenerator:
                     continue
                 stat = path.stat()
                 rel = path.relative_to(pkg_share)
-                digest.update(f"{rel}:{stat.st_size}:{stat.st_mtime_ns}\n".encode())
-        return digest.hexdigest()
+                lines.append(f"{rel}:{stat.st_size}:{stat.st_mtime_ns}")
+        return "".join(f"{line}\n" for line in lines)
+
+    @classmethod
+    def _interface_stamp(cls, pkg_share: Path) -> str:
+        """Digest of a package's interface definitions."""
+        return hashlib.sha256(cls._interface_records(pkg_share).encode()).hexdigest()
+
+    @classmethod
+    def _write_manifest(cls, binding_dir: Path, pkg_share: Path):
+        """Record what a generated crate was generated from, inside the crate.
+
+        The crate's build.rs reads this to fail a plain ``cargo build`` against
+        stale bindings, which is the one freshness check colcon cannot perform:
+        cargo never consults the stamp file.
+        """
+        if not binding_dir.is_dir():
+            # Generation produced nothing to annotate; not worth failing over.
+            return
+        try:
+            content = f"{pkg_share.resolve()}\n{cls._interface_records(pkg_share)}"
+            (binding_dir / MANIFEST_FILENAME).write_text(content)
+        except OSError as e:
+            # The build.rs check treats a missing manifest as "cannot tell" and
+            # proceeds, so this costs a check, not a build.
+            logger.warning(f"Could not write {binding_dir / MANIFEST_FILENAME}: {e}")
 
     @staticmethod
     def _stamp_matches(stamp_file: Path, expected: str) -> bool:
@@ -774,6 +979,10 @@ class WorkspaceBindingGenerator:
     _MARKER_BUILD_BEGIN = "# BEGIN colcon-cargo-ros2 generated build flags"
     _MARKER_BUILD_END = "# END colcon-cargo-ros2 build flags"
 
+    # Marker comments delimiting the auto-generated environment region
+    _MARKER_ENV_BEGIN = "# BEGIN colcon-cargo-ros2 generated environment"
+    _MARKER_ENV_END = "# END colcon-cargo-ros2 environment"
+
     def _detect_cargo_workspace_root(self, crate_path: Path, colcon_ws_root: Path) -> Path:
         """Find the Cargo workspace root for a given crate.
 
@@ -855,6 +1064,32 @@ class WorkspaceBindingGenerator:
                 binding_dirs[pkg_name] = pkg_build_dir
 
         return binding_dirs
+
+    @staticmethod
+    def _drop_missing_bindings(binding_dirs: Dict[str, Path]) -> Dict[str, Path]:
+        """Drop entries whose crate is no longer readable, naming what was dropped.
+
+        Collection and writing are separated by every package's build task, so a
+        directory can go away in between -- a parallel ``colcon build --clean``,
+        a hand-run ``rm -rf build/``. A patch to a directory with no Cargo.toml
+        makes cargo report ``unable to update <path>`` against the *consumer*, so
+        it is better to omit the patch and let the missing-bindings check speak.
+        """
+        kept: Dict[str, Path] = {}
+        dropped: List[str] = []
+        for pkg_name, binding_dir in binding_dirs.items():
+            if (binding_dir / "Cargo.toml").is_file():
+                kept[pkg_name] = binding_dir
+            else:
+                dropped.append(pkg_name)
+
+        if dropped:
+            _warn_once(
+                "vanished-bindings:" + ",".join(sorted(dropped)),
+                "Generated bindings disappeared between generation and config "
+                "writing for: " + ", ".join(sorted(dropped)) + ". Re-run `colcon build`.",
+            )
+        return kept
 
     @staticmethod
     def _assert_no_missing_bindings(ros_packages: Dict[str, Path], binding_dirs: Dict[str, Path]):
@@ -974,20 +1209,30 @@ class WorkspaceBindingGenerator:
         return "\n".join(lines)
 
     @classmethod
-    def _merge_into_config(cls, existing_content: Optional[str], marker_block: str) -> str:
-        """Merge *marker_block* into *existing_content* preserving user content.
+    def _merge_section(
+        cls,
+        existing_content: Optional[str],
+        section: str,
+        marker_begin: str,
+        marker_end: str,
+        marker_block: str,
+    ) -> str:
+        """Merge *marker_block* into the ``[section]`` table of *existing_content*.
 
         Handles three cases:
         1. Existing markers found → replace content between them.
-        2. ``[patch.crates-io]`` section exists but no markers → append block
-           before the next section header.
-        3. No ``[patch.crates-io]`` section → append new section at end.
+        2. The section exists but has no markers → append the block before the
+           next section header.
+        3. The section does not exist → append it at the end.
+
+        Everything outside the markers is preserved byte for byte, which a TOML
+        round-trip would not do.
 
         Returns the full file content to be written.
         """
         if not existing_content:
             # Brand-new file
-            return f"[patch.crates-io]\n{marker_block}\n"
+            return f"[{section}]\n{marker_block}\n"
 
         lines = existing_content.splitlines()
 
@@ -995,9 +1240,9 @@ class WorkspaceBindingGenerator:
         begin_idx: Optional[int] = None
         end_idx: Optional[int] = None
         for i, line in enumerate(lines):
-            if line.strip() == cls._MARKER_BEGIN:
+            if line.strip() == marker_begin:
                 begin_idx = i
-            elif line.strip() == cls._MARKER_END and begin_idx is not None:
+            elif line.strip() == marker_end and begin_idx is not None:
                 end_idx = i
                 break
 
@@ -1005,66 +1250,169 @@ class WorkspaceBindingGenerator:
             new_lines = lines[:begin_idx] + marker_block.splitlines() + lines[end_idx + 1 :]
             return "\n".join(new_lines) + "\n"
 
-        # --- Case 2: [patch.crates-io] section exists but no markers ---
-        patch_header_re = re.compile(r"^\[patch\.crates-io\]")
-        next_section_re = re.compile(r"^\[(?!patch\.crates-io)")
-
-        patch_header_idx: Optional[int] = None
+        # --- Case 2: section exists but no markers ---
+        header = f"[{section}]"
+        header_idx: Optional[int] = None
         for i, line in enumerate(lines):
-            if patch_header_re.match(line.strip()):
-                patch_header_idx = i
+            if line.strip() == header:
+                header_idx = i
                 break
 
-        if patch_header_idx is not None:
-            # Find the end of the [patch.crates-io] section
+        if header_idx is not None:
+            # Find the end of the section
             insert_idx = len(lines)  # default: end of file
-            for i in range(patch_header_idx + 1, len(lines)):
-                if next_section_re.match(lines[i].strip()):
+            for i in range(header_idx + 1, len(lines)):
+                stripped = lines[i].strip()
+                if stripped.startswith("[") and stripped != header:
                     insert_idx = i
                     break
 
             new_lines = lines[:insert_idx] + [marker_block] + lines[insert_idx:]
             return "\n".join(new_lines) + "\n"
 
-        # --- Case 3: no [patch.crates-io] section at all ---
+        # --- Case 3: no such section at all ---
         # Ensure a trailing newline before the new section
         content = existing_content.rstrip("\n") + "\n"
-        content += f"\n[patch.crates-io]\n{marker_block}\n"
+        content += f"\n[{section}]\n{marker_block}\n"
         return content
 
-    def _compute_rustflags(self) -> List[str]:
-        """Compute ``-L native=<path>`` linker search flags.
+    @classmethod
+    def _merge_into_config(cls, existing_content: Optional[str], marker_block: str) -> str:
+        """Merge the ``[patch.crates-io]`` marker block into a config file."""
+        return cls._merge_section(
+            existing_content,
+            "patch.crates-io",
+            cls._MARKER_BEGIN,
+            cls._MARKER_END,
+            marker_block,
+        )
 
-        Collects library directories from:
-        1. Workspace install directory (per-package lib/ dirs)
-        2. System ROS library paths from ``AMENT_PREFIX_PATH``
+    @staticmethod
+    def _has_library_files(lib_dir: Path) -> bool:
+        """True when *lib_dir* holds something a linker could actually use.
 
-        Returns absolute paths (required because Cargo resolves rustflags
-        relative to CWD, not the config file location).
+        A Rust package that installs only executables still gets an
+        ``install/<pkg>/lib`` directory (its binaries live in ``lib/<pkg>/``),
+        so directory existence alone says nothing about linkability.
+        """
+        suffixes = (".so", ".dylib", ".a", ".dll", ".lib")
+        try:
+            entries = list(lib_dir.iterdir())
+        except OSError:
+            return False
+        for entry in entries:
+            if not entry.is_file():
+                continue
+            # `.so.1` and friends are versioned sonames, still linkable targets.
+            if entry.name.endswith(suffixes) or ".so." in entry.name:
+                return True
+        return False
+
+    def _select_lib_packages_for_target(self, crates: List[Tuple[str, Path]]) -> Optional[Set[str]]:
+        """Packages whose installed libraries a Cargo target may need to link.
+
+        Unlike patch selection this is not limited to interface packages: a crate
+        can link a C library from any ROS package it declares.
+
+        Returns None when any crate's dependencies are unknown, which means
+        "fall back to every install prefix" rather than "needs nothing".
+        """
+        selected: Set[str] = set()
+        for pkg_name, _crate_path in crates:
+            deps = self._package_all_deps.get(pkg_name)
+            if deps is None:
+                logger.debug(
+                    f"No dependency attribution for {pkg_name}; "
+                    "using all install prefixes for this Cargo target"
+                )
+                return None
+            selected |= deps
+        return selected
+
+    def _library_search_dirs(self, lib_packages: Optional[Set[str]]) -> List[Path]:
+        """Absolute library directories to put on the linker search path.
+
+        Args:
+            lib_packages: Workspace packages this Cargo target depends on, or
+                None to consider every installed package (unknown attribution).
+        """
+        dirs: List[Path] = []
+
+        if self.install_base.exists():
+            if lib_packages is None:
+                prefixes = [p for p in sorted(self.install_base.iterdir()) if p.is_dir()]
+            else:
+                prefixes = [self.install_base / name for name in sorted(lib_packages)]
+            for prefix in prefixes:
+                lib_dir = prefix / "lib"
+                if lib_dir.is_dir() and self._has_library_files(lib_dir):
+                    dirs.append(lib_dir.absolute())
+
+        for prefix in os.environ.get("AMENT_PREFIX_PATH", "").split(":"):
+            if not prefix:
+                continue
+            lib_dir = Path(prefix) / "lib"
+            if lib_dir.is_dir() and self._has_library_files(lib_dir):
+                lib_dir = lib_dir.absolute()
+                if lib_dir not in dirs:
+                    dirs.append(lib_dir)
+
+        return dirs
+
+    def _rpath_flags(self, lib_dir: Path) -> List[str]:
+        """Link arguments baking *lib_dir* into the binary's runtime search path.
+
+        Without these, a binary built by a bare ``cargo run`` cannot find the ROS
+        shared libraries: cargo overwrites ``LD_LIBRARY_PATH`` for the processes it
+        launches, so an ``[env]`` entry cannot supply them.
+
+        ``--disable-new-dtags`` is required on Linux. The default emits ``RUNPATH``,
+        which the loader does not apply to *transitive* libraries -- and ROS
+        typesupport libraries are exactly that: the executable needs
+        ``libstd_msgs__rosidl_typesupport_c.so``, which itself needs
+        ``librosidl_typesupport_c.so``. ``RPATH`` does apply transitively.
+        """
+        if getattr(self.args, "no_rpath", False):
+            return []
+        if sys.platform.startswith("win"):
+            # No rpath concept; the loader uses PATH.
+            return []
+        if sys.platform == "darwin":
+            # Mach-O has a single rpath notion, and no dtags to disable.
+            return [f'"-C", "link-arg=-Wl,-rpath,{lib_dir}"']
+        return [f'"-C", "link-arg=-Wl,-rpath,{lib_dir},--disable-new-dtags"']
+
+    def _compute_rustflags(self, lib_packages: Optional[Set[str]]) -> List[str]:
+        """Compute ``-L native=<path>`` search flags and matching rpath arguments.
+
+        Paths are absolute: Cargo resolves rustflags relative to the invocation
+        directory, not to the config file's location.
         """
         rustflags: List[str] = []
-
-        # Add workspace install directory lib paths
-        if self.install_base.exists():
-            for pkg_install in sorted(self.install_base.iterdir()):
-                if not pkg_install.is_dir():
-                    continue
-                lib_dir = pkg_install / "lib"
-                if lib_dir.exists():
-                    rustflags.append(f'"-L", "native={lib_dir.absolute()}"')
-
-        # Add system ROS library paths from AMENT_PREFIX_PATH
-        if "AMENT_PREFIX_PATH" in os.environ:
-            for prefix in os.environ["AMENT_PREFIX_PATH"].split(":"):
-                lib_path = Path(prefix) / "lib"
-                if lib_path.exists():
-                    rustflags.append(f'"-L", "native={lib_path.absolute()}"')
-
+        for lib_dir in self._library_search_dirs(lib_packages):
+            rustflags.append(f'"-L", "native={lib_dir}"')
+            rustflags.extend(self._rpath_flags(lib_dir))
         return rustflags
 
+    def _compute_target_dir(self, config_target: Path) -> Path:
+        """Where cargo should put build artifacts for *config_target*.
+
+        Keeping this under the colcon build base rather than in ``src/`` leaves
+        the source tree clean, while both colcon and a manual ``cargo build``
+        keep sharing one cache: they read the same ``.cargo/config.toml``.
+        """
+        try:
+            relative = config_target.resolve().relative_to(self.workspace_root.resolve())
+            slug = "_".join(relative.parts) or config_target.name
+        except ValueError:
+            slug = config_target.name
+        return (self.build_base / ".cargo_target" / slug).absolute()
+
     @classmethod
-    def _generate_build_marker_block(cls, rustflags: List[str]) -> str:
-        """Produce the ``[build]`` marker block with rustflags.
+    def _generate_build_marker_block(
+        cls, rustflags: List[str], target_dir: Optional[str] = None
+    ) -> str:
+        """Produce the ``[build]`` marker block with rustflags and target-dir.
 
         The block does **not** include a ``[build]`` header — the
         merge logic handles placement within an existing or new section.
@@ -1074,6 +1422,8 @@ class WorkspaceBindingGenerator:
             "# Auto-generated by colcon build. Do not edit between markers.",
             "# Re-run `colcon build` to regenerate.",
         ]
+        if target_dir is not None:
+            lines.append(f'target-dir = "{target_dir}"')
         if rustflags:
             lines.append("rustflags = [")
             for i, flag in enumerate(rustflags):
@@ -1084,6 +1434,20 @@ class WorkspaceBindingGenerator:
             lines.append("rustflags = []")
         lines.append(cls._MARKER_BUILD_END)
         return "\n".join(lines)
+
+    @classmethod
+    def _has_user_target_dir(cls, content: str) -> bool:
+        """True when the user set their own ``target-dir`` outside our markers."""
+        inside = False
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped == cls._MARKER_BUILD_BEGIN:
+                inside = True
+            elif stripped == cls._MARKER_BUILD_END:
+                inside = False
+            elif not inside and stripped.startswith("target-dir"):
+                return True
+        return False
 
     @classmethod
     def _merge_build_into_config(cls, existing_content: str, build_marker_block: str) -> str:
@@ -1101,56 +1465,126 @@ class WorkspaceBindingGenerator:
 
         Returns the full file content to be written.
         """
-        lines = existing_content.splitlines()
+        return cls._merge_section(
+            existing_content,
+            "build",
+            cls._MARKER_BUILD_BEGIN,
+            cls._MARKER_BUILD_END,
+            build_marker_block,
+        )
 
-        # --- Case 1: build markers already present ---
-        begin_idx: Optional[int] = None
-        end_idx: Optional[int] = None
+    # -------------------------------------------------------------------------
+    # [env]: the environment generated-crate build scripts need
+    # -------------------------------------------------------------------------
+
+    def _compute_env(self) -> Dict[str, str]:
+        """Environment entries to bake into the config.
+
+        ``rosidl_runtime_rs`` and the generated crates read ``AMENT_PREFIX_PATH``
+        from their build scripts and panic without it, which is what makes a
+        ``cargo build`` in an unsourced shell fail. Baking the value in -- workspace
+        install prefixes ahead of whatever the generating shell had -- lets those
+        build scripts run unaided.
+        """
+        prefixes: List[str] = []
+        if self.install_base.exists():
+            for pkg_install in sorted(self.install_base.iterdir()):
+                if pkg_install.is_dir():
+                    prefixes.append(str(pkg_install.absolute()))
+
+        for prefix in os.environ.get("AMENT_PREFIX_PATH", "").split(":"):
+            if prefix and prefix not in prefixes:
+                prefixes.append(prefix)
+
+        if not prefixes:
+            return {}
+        return {"AMENT_PREFIX_PATH": ":".join(prefixes)}
+
+    @classmethod
+    def _generate_env_marker_block(cls, env: Dict[str, str]) -> str:
+        """Produce the ``[env]`` marker block.
+
+        Entries use ``force = false`` (cargo's default) so that a sourced
+        environment still wins: a user working in an overlay workspace must not
+        have it shadowed by a value baked in at build time.
+        """
+        lines = [
+            cls._MARKER_ENV_BEGIN,
+            "# Auto-generated by colcon build. Do not edit between markers.",
+            "# Re-run `colcon build` to regenerate.",
+        ]
+        for name in sorted(env):
+            lines.append(f'{name} = {{ value = "{env[name]}", force = false }}')
+        lines.append(cls._MARKER_ENV_END)
+        return "\n".join(lines)
+
+    @classmethod
+    def _merge_env_into_config(cls, existing_content: str, env_marker_block: str) -> str:
+        """Merge the ``[env]`` marker block into a config file."""
+        return cls._merge_section(
+            existing_content,
+            "env",
+            cls._MARKER_ENV_BEGIN,
+            cls._MARKER_ENV_END,
+            env_marker_block,
+        )
+
+    # -------------------------------------------------------------------------
+    # .gitignore hygiene
+    # -------------------------------------------------------------------------
+
+    _GITIGNORE_BEGIN = "# BEGIN colcon-cargo-ros2"
+    _GITIGNORE_END = "# END colcon-cargo-ros2"
+
+    def _ensure_gitignored(self, config_target: Path):
+        """Ignore the generated config, which cannot live outside the source tree.
+
+        Cargo finds ``.cargo/config.toml`` by walking up from the crate, so the
+        file has to sit next to the sources. Its contents are machine-specific
+        absolute paths, so every workspace using this tool would otherwise carry a
+        permanently dirty file.
+        """
+        if getattr(self.args, "no_gitignore", False):
+            return
+        if not _git_succeeds(["rev-parse", "--is-inside-work-tree"], config_target):
+            return
+
+        entry = ".cargo/config.toml"
+        if _git_succeeds(["check-ignore", "-q", entry], config_target):
+            return
+
+        gitignore = config_target / ".gitignore"
+        existing = gitignore.read_text() if gitignore.exists() else ""
+        block = "\n".join([self._GITIGNORE_BEGIN, entry, self._GITIGNORE_END])
+
+        lines = existing.splitlines()
+        begin_idx = end_idx = None
         for i, line in enumerate(lines):
-            if line.strip() == cls._MARKER_BUILD_BEGIN:
+            if line.strip() == self._GITIGNORE_BEGIN:
                 begin_idx = i
-            elif line.strip() == cls._MARKER_BUILD_END and begin_idx is not None:
+            elif line.strip() == self._GITIGNORE_END and begin_idx is not None:
                 end_idx = i
                 break
 
         if begin_idx is not None and end_idx is not None:
-            new_lines = lines[:begin_idx] + build_marker_block.splitlines() + lines[end_idx + 1 :]
-            return "\n".join(new_lines) + "\n"
+            merged = "\n".join(lines[:begin_idx] + block.splitlines() + lines[end_idx + 1 :])
+        elif existing.strip():
+            merged = existing.rstrip("\n") + "\n\n" + block
+        else:
+            merged = block
 
-        # --- Case 2: [build] section exists but no markers ---
-        build_header_re = re.compile(r"^\[build\]$")
-        next_section_re = re.compile(r"^\[(?!build\])")
-
-        build_header_idx: Optional[int] = None
-        for i, line in enumerate(lines):
-            if build_header_re.match(line.strip()):
-                build_header_idx = i
-                break
-
-        if build_header_idx is not None:
-            # Find the end of the [build] section
-            insert_idx = len(lines)  # default: end of file
-            for i in range(build_header_idx + 1, len(lines)):
-                if next_section_re.match(lines[i].strip()):
-                    insert_idx = i
-                    break
-
-            new_lines = lines[:insert_idx] + [build_marker_block] + lines[insert_idx:]
-            return "\n".join(new_lines) + "\n"
-
-        # --- Case 3: no [build] section at all ---
-        content = existing_content.rstrip("\n") + "\n"
-        content += f"\n[build]\n{build_marker_block}\n"
-        return content
+        gitignore.write_text(merged + "\n")
+        logger.debug(f"Ignoring {entry} in {gitignore}")
 
     def _write_cargo_configs(self, ros_packages: Dict[str, Path]):
         """Generate ``.cargo/config.toml`` for each Cargo workspace / standalone crate.
 
-        Writes both ``[patch.crates-io]`` entries (for dependency resolution) and
-        ``[build]`` rustflags (for linker search paths). This is the single config
-        used by both ``cargo build`` and IDEs.
+        Writes ``[patch.crates-io]`` entries (dependency resolution), ``[build]``
+        rustflags and target-dir (linking and artifact placement), and ``[env]``
+        (what generated build scripts read). This is the single config used by
+        ``colcon build``, a bare ``cargo`` invocation, and IDEs alike.
         """
-        binding_dirs = self._collect_binding_dirs(ros_packages)
+        binding_dirs = self._drop_missing_bindings(self._collect_binding_dirs(ros_packages))
         self._assert_no_missing_bindings(ros_packages, binding_dirs)
         if not binding_dirs:
             return
@@ -1159,18 +1593,13 @@ class WorkspaceBindingGenerator:
         if not targets:
             return
 
-        rustflags = self._compute_rustflags()
+        env = self._compute_env()
         generated_count = 0
 
         for config_target, crates in targets.items():
             target_binding_dirs = self._select_bindings_for_target(crates, binding_dirs)
             patches = self._compute_relative_patches(config_target, target_binding_dirs)
-
-            # Written even when there are no patches: the [build] rustflags are
-            # still needed for linking, and rewriting the marker block is what
-            # clears patches left over from a previous build.
-            patch_marker_block = self._generate_marker_block(patches)
-            build_marker_block = self._generate_build_marker_block(rustflags)
+            rustflags = self._compute_rustflags(self._select_lib_packages_for_target(crates))
 
             config_dir = config_target / ".cargo"
             config_file = config_dir / "config.toml"
@@ -1180,13 +1609,32 @@ class WorkspaceBindingGenerator:
             if config_file.exists():
                 existing_content = config_file.read_text()
 
-            # Merge patches first, then build flags
+            # A target-dir the user set themselves stays authoritative; ours is a
+            # default for workspaces that express no preference.
+            target_dir: Optional[str] = str(self._compute_target_dir(config_target))
+            if existing_content and self._has_user_target_dir(existing_content):
+                logger.info(
+                    f"Keeping the target-dir already set in {config_file}; "
+                    "cargo artifacts stay where that points."
+                )
+                target_dir = None
+
+            # Written even when there are no patches: the [build] rustflags are
+            # still needed for linking, and rewriting the marker block is what
+            # clears patches left over from a previous build.
+            patch_marker_block = self._generate_marker_block(patches)
+            build_marker_block = self._generate_build_marker_block(rustflags, target_dir)
+            env_marker_block = self._generate_env_marker_block(env)
+
+            # Merge patches first, then build flags, then environment
             new_content = self._merge_into_config(existing_content, patch_marker_block)
             new_content = self._merge_build_into_config(new_content, build_marker_block)
+            new_content = self._merge_env_into_config(new_content, env_marker_block)
 
             # Write the file
             config_dir.mkdir(parents=True, exist_ok=True)
             config_file.write_text(new_content)
+            self._ensure_gitignored(config_target)
             generated_count += 1
 
             crate_names = [crate_path.name for _name, crate_path in crates]
@@ -1197,10 +1645,7 @@ class WorkspaceBindingGenerator:
             )
 
         if generated_count > 0:
-            logger.info(
-                f"Generated {generated_count} .cargo/config.toml file(s). "
-                "Consider adding .cargo/config.toml to .gitignore (paths are machine-specific)."
-            )
+            logger.debug(f"Generated {generated_count} .cargo/config.toml file(s)")
 
 
 def generate_workspace_bindings(

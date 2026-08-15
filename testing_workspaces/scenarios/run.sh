@@ -376,6 +376,48 @@ scenario_cargo_args_release() {
     fi
 }
 
+# A built workspace that has been moved, renamed, or had its install tree copied
+# somewhere else. An absolute rpath stops resolving the moment any of that
+# happens; the $ORIGIN-relative entries are what keep the binaries working.
+scenario_relocated_workspace() {
+    local dir moved install_only
+    dir=$(fresh relocated_workspace)
+    build "$dir" --packages-select local_msgs nested_node
+
+    moved="$WORK/relocated_workspace.moved"
+    install_only="$WORK/relocated_workspace.install-only"
+    rm -rf "$moved" "$install_only"
+    mv "$dir" "$moved"
+
+    if env -u AMENT_PREFIX_PATH -u LD_LIBRARY_PATH \
+        "$moved/install/nested_node/lib/nested_node/nested_node" >/dev/null 2>&1; then
+        ok "an installed binary runs after the workspace is moved"
+    else
+        bad "the installed binary broke when the workspace moved"
+    fi
+
+    local built
+    built="$moved/build/.cargo_target/src_nested_deep_deeper_nested_node/debug/nested_node"
+    if env -u AMENT_PREFIX_PATH -u LD_LIBRARY_PATH "$built" >/dev/null 2>&1; then
+        ok "a built binary runs after the workspace is moved"
+    else
+        bad "the built binary broke when the workspace moved"
+    fi
+
+    # The install tree on its own, as one would copy to another machine.
+    mkdir -p "$install_only"
+    cp -a "$moved/install" "$install_only/"
+    if env -u AMENT_PREFIX_PATH -u LD_LIBRARY_PATH \
+        "$install_only/install/nested_node/lib/nested_node/nested_node" >/dev/null 2>&1; then
+        ok "an install tree copied on its own still runs"
+    else
+        bad "the copied install tree does not run"
+    fi
+
+    # Put it back where the rest of the harness expects to find it.
+    mv "$moved" "$dir"
+}
+
 # A dependency declared in package.xml and never compiled against.
 #
 # installer_node's launch file starts a node publishing geometry_msgs, so the
@@ -440,14 +482,16 @@ ALL_SCENARIOS=(
     cargo_args_release
     package_at_workspace_root
     runtime_only_dependency
+    relocated_workspace
 )
 
 # Scenarios that only read a healthy workspace share one build.
 NEEDS_BUILT=(doctor_healthy env_free_build env_free_run)
 
 # Scenarios that assert on where artifacts land cannot have their target
-# directory redirected out from under them.
-NO_SHARED_TARGET=(cargo_args_release source_tree_clean)
+# directory redirected out from under them: relocated_workspace needs the built
+# binary to sit inside the workspace it moves, which the shared pool prevents.
+NO_SHARED_TARGET=(cargo_args_release source_tree_clean relocated_workspace)
 
 # A quarter of the cores: each scenario's colcon build parallelises internally,
 # so more workers than this mostly contend. Measured on 32 cores, cold: 366s

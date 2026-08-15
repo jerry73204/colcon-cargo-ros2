@@ -1554,16 +1554,56 @@ class WorkspaceBindingGenerator:
         typesupport libraries are exactly that: the executable needs
         ``libstd_msgs__rosidl_typesupport_c.so``, which itself needs
         ``librosidl_typesupport_c.so``. ``RPATH`` does apply transitively.
+
+        Workspace-internal directories additionally get ``$ORIGIN``-relative
+        entries, so that a workspace which is moved, renamed or copied elsewhere
+        keeps working; see :meth:`_relative_rpaths`.
         """
         if getattr(self.args, "no_rpath", False):
             return []
         if sys.platform.startswith("win"):
             # No rpath concept; the loader uses PATH.
             return []
-        if sys.platform == "darwin":
-            # Mach-O has a single rpath notion, and no dtags to disable.
-            return [f'"-C", "link-arg=-Wl,-rpath,{lib_dir}"']
-        return [f'"-C", "link-arg=-Wl,-rpath,{lib_dir},--disable-new-dtags"']
+
+        flags = []
+        for path in [str(lib_dir)] + self._relative_rpaths(lib_dir):
+            if sys.platform == "darwin":
+                # Mach-O has a single rpath notion, and no dtags to disable.
+                flags.append(f'"-C", "link-arg=-Wl,-rpath,{path}"')
+            else:
+                flags.append(f'"-C", "link-arg=-Wl,-rpath,{path},--disable-new-dtags"')
+        return flags
+
+    def _relative_rpaths(self, lib_dir: Path) -> List[str]:
+        """``$ORIGIN``-relative forms of *lib_dir*, for binaries that may move.
+
+        Only for directories inside this workspace's install base. A system
+        prefix such as ``/opt/ros/humble/lib`` does not travel with the
+        workspace, so an absolute entry is the correct thing for it.
+
+        The distance from a binary to the install tree depends on where the
+        binary is, and the same binary exists in two places: cargo's target
+        directory and the installed copy. Both are emitted, plus the
+        cross-compilation variant with a target triple in the path. Entries that
+        do not resolve cost nothing -- the loader simply tries the next one.
+        """
+        try:
+            relative = lib_dir.resolve().relative_to(self.install_base.resolve())
+        except ValueError:
+            return []
+
+        # macOS spells the token differently but resolves it the same way.
+        token = "@loader_path" if sys.platform == "darwin" else "$ORIGIN"
+        install_dir = self.install_base.name
+
+        return [
+            # install/<pkg>/lib/<pkg>/<binary>
+            f"{token}/../../../{relative}",
+            # build/.cargo_target/<slug>/<profile>/<binary>
+            f"{token}/../../../../{install_dir}/{relative}",
+            # ... with a target triple, one level deeper
+            f"{token}/../../../../../{install_dir}/{relative}",
+        ]
 
     def _compute_rustflags(self, lib_packages: Optional[Set[str]]) -> List[str]:
         """Compute ``-L native=<path>`` search flags and matching rpath arguments.

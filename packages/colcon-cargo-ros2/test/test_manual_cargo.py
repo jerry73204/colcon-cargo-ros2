@@ -196,6 +196,84 @@ class TestComputeRustflagsWithRpath:
 # ---------------------------------------------------------------------------
 
 
+class TestRelocatableRpath:
+    """Workspace-internal libraries get $ORIGIN-relative entries as well.
+
+    An absolute rpath stops working the moment the workspace is moved, renamed
+    or copied elsewhere, which is a normal thing to do with a built tree. The
+    relative entries survive it, because they are resolved from wherever the
+    binary itself ended up.
+    """
+
+    def test_workspace_libraries_get_origin_relative_entries(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("AMENT_PREFIX_PATH", raising=False)
+        monkeypatch.setattr("sys.platform", "linux")
+        _lib_dir(tmp_path, "my_msgs")
+        gen = _make_generator(tmp_path)
+
+        flags = gen._compute_rustflags({"my_msgs"})
+        rpaths = " ".join(flags)
+
+        # From an installed binary: install/<consumer>/lib/<consumer>/<bin>
+        assert "$ORIGIN/../../../my_msgs/lib" in rpaths
+        # From a built one: build/.cargo_target/<slug>/<profile>/<bin>
+        assert "$ORIGIN/../../../../install/my_msgs/lib" in rpaths
+        # ... and the same with a target triple in the path
+        assert "$ORIGIN/../../../../../install/my_msgs/lib" in rpaths
+        # The absolute entry stays, for layouts these depths do not describe.
+        assert f"native={tmp_path / 'install' / 'my_msgs' / 'lib'}" in rpaths
+
+    def test_system_libraries_stay_absolute(self, tmp_path, monkeypatch):
+        """/opt/ros is not part of the workspace and does not move with it."""
+        monkeypatch.setattr("sys.platform", "linux")
+        ros = tmp_path / "opt" / "ros" / "humble"
+        (ros / "lib").mkdir(parents=True)
+        (ros / "lib" / "librcl.so").write_text("elf")
+        monkeypatch.setenv("AMENT_PREFIX_PATH", str(ros))
+        gen = _make_generator(tmp_path)
+
+        flags = [f for f in gen._compute_rustflags(set()) if "link-arg" in f]
+
+        assert flags
+        assert not any("ORIGIN" in f for f in flags)
+
+    def test_macos_uses_loader_path(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("AMENT_PREFIX_PATH", raising=False)
+        monkeypatch.setattr("sys.platform", "darwin")
+        _lib_dir(tmp_path, "my_msgs")
+        gen = _make_generator(tmp_path)
+
+        rpaths = " ".join(gen._compute_rustflags({"my_msgs"}))
+
+        assert "@loader_path/../../../my_msgs/lib" in rpaths
+        assert "$ORIGIN" not in rpaths
+
+    def test_no_rpath_suppresses_relative_entries_too(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("AMENT_PREFIX_PATH", raising=False)
+        monkeypatch.setattr("sys.platform", "linux")
+        _lib_dir(tmp_path, "my_msgs")
+        gen = _make_generator(tmp_path)
+        gen.args.no_rpath = True
+
+        flags = gen._compute_rustflags({"my_msgs"})
+
+        assert not any("link-arg" in f for f in flags)
+
+    def test_install_base_name_is_respected(self, tmp_path, monkeypatch):
+        """The --install-base option can rename the directory."""
+        monkeypatch.delenv("AMENT_PREFIX_PATH", raising=False)
+        monkeypatch.setattr("sys.platform", "linux")
+        lib = tmp_path / "elsewhere" / "my_msgs" / "lib"
+        lib.mkdir(parents=True)
+        (lib / "libmy_msgs.so").write_text("elf")
+        gen = _make_generator(tmp_path)
+        gen.install_base = tmp_path / "elsewhere"
+
+        rpaths = " ".join(gen._compute_rustflags({"my_msgs"}))
+
+        assert "$ORIGIN/../../../../elsewhere/my_msgs/lib" in rpaths
+
+
 class TestComputeEnv:
     def test_prepends_workspace_prefixes(self, tmp_path, monkeypatch):
         monkeypatch.setenv("AMENT_PREFIX_PATH", "/opt/ros/humble")

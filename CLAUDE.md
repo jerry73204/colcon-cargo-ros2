@@ -427,6 +427,18 @@ Ensures:
 
 ## Recent Architectural Improvements
 
+### Relocatable rpaths (2026-08-15)
+
+**Problem** (issue #9): rpath entries were absolute, so moving or renaming a built workspace broke every installed binary — verified: `error while loading shared libraries: liblocal_msgs__rosidl_typesupport_c.so`.
+
+**Solution**: workspace-internal library directories also get `$ORIGIN`-relative entries (`@loader_path` on macOS), covering the three places a binary can sit: the installed layout, cargo's target directory, and the cross-compiled variant one level deeper. The absolute entry stays for layouts those depths do not describe; system prefixes such as `/opt/ros/humble/lib` stay absolute, since they do not travel with the workspace.
+
+**Verified**: `scenarios/relocated_workspace` moves a built workspace and copies its `install/` tree elsewhere, then runs both the installed and the built binary with no ROS environment. Removing the relative entries fails all three assertions.
+
+**Note**: the scenario opts out of the harness's shared cargo target pool. It asserts on path relationships, so the built binary has to sit inside the workspace it moves.
+
+---
+
 ### One Source for the Version (2026-08-15)
 
 **Problem** (issue #5): `colcon_cargo_ros2.__version__` was a literal that `just bump-version` did not rewrite, so it reported 0.2.0 while pyproject.toml and Cargo.toml were on 0.4.1 — wrong across several releases, and read by the skew guard the build task uses.

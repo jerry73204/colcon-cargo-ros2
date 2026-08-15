@@ -253,7 +253,7 @@ The generated `.cargo/config.toml` is what makes this work. It sits at the Cargo
 | Section | Purpose |
 |---|---|
 | `[patch.crates-io]` | Resolves `std_msgs = "*"` to the generated crate under `build/` |
-| `[build] rustflags` | `-L` linker search paths, plus rpath entries so built binaries find ROS libraries at run time |
+| `[build] rustflags` | `-L` linker search paths, plus rpath entries so built binaries find ROS libraries at run time. Workspace-internal libraries get `$ORIGIN`-relative entries too, so a workspace that is moved, renamed, or whose `install/` tree is copied elsewhere keeps working |
 | `[build] target-dir` | Puts cargo artifacts under `build/.cargo_target/`, keeping `src/` clean while colcon and manual cargo share one cache |
 | `[env]` | `AMENT_PREFIX_PATH` for generated build scripts, with `force = false` so a sourced environment still wins |
 

@@ -308,6 +308,8 @@ cannot open shared object file: No such file or directory
 
 **Solution**: source the workspace (`source install/setup.bash`), or rebuild without `--no-rpath` so library directories are baked in.
 
+**Moving a built workspace** is supported without a rebuild: alongside the absolute entry, workspace-internal libraries get `$ORIGIN`-relative rpaths covering the installed layout, cargo's target directory, and the cross-compiled variant. Moving or renaming the workspace, or copying `install/` on its own to another machine, all keep working. What does not travel is `/opt/ros/<distro>/lib`, which is absolute by design — the target machine needs its own ROS installation.
+
 ### `the trait bound ...: MessageIDL is not satisfied`
 
 **Symptoms**:

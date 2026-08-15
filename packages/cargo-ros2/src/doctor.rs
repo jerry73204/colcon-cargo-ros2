@@ -309,19 +309,30 @@ fn collect_interface_records(dir: &Path, base: &Path, out: &mut BTreeSet<String>
         let (Ok(metadata), Ok(relative)) = (entry.metadata(), path.strip_prefix(base)) else {
             continue;
         };
-        let Ok(modified) = metadata.modified() else {
-            continue;
-        };
-        let Ok(since_epoch) = modified.duration_since(std::time::UNIX_EPOCH) else {
+        let Ok(contents) = std::fs::read(&path) else {
             continue;
         };
         out.insert(format!(
             "{}:{}:{}",
             relative.display(),
             metadata.len(),
-            since_epoch.as_nanos()
+            fnv1a64(&contents)
         ));
     }
+}
+
+/// FNV-1a, 64-bit, as 16 hex digits.
+///
+/// Must match the digest colcon-cargo-ros2 writes into `.bindgen_manifest` and
+/// the one compiled into each generated crate's build.rs; all three describe the
+/// same records.
+fn fnv1a64(data: &[u8]) -> String {
+    let mut digest: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in data {
+        digest ^= *byte as u64;
+        digest = digest.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{digest:016x}")
 }
 
 /// Interface packages used in Cargo.toml must be declared in package.xml.
@@ -653,6 +664,16 @@ mod tests {
         );
     }
 
+    /// The digest has to be byte-identical to the one Python writes into the
+    /// manifest, or every crate looks stale to `doctor` and fresh to colcon.
+    #[test]
+    fn fnv1a64_matches_the_reference_vectors() {
+        // Computed with the Python implementation in workspace_bindgen.py.
+        assert_eq!(fnv1a64(b""), "cbf29ce484222325");
+        assert_eq!(fnv1a64(b"int32 x\n"), "696106d176cc877f");
+        assert_eq!(fnv1a64(b"a"), "af63dc4c8601ec8c");
+    }
+
     #[test]
     fn stale_manifest_is_detected() {
         let tmp = TempDir::new().unwrap();
@@ -661,21 +682,15 @@ mod tests {
         let crate_dir = tmp.path().join("build/my_msgs");
         fs::create_dir_all(&crate_dir).unwrap();
 
-        // Record the file as it is, then change its size.
-        let metadata = fs::metadata(source.join("msg/Thing.msg")).unwrap();
-        let mtime = metadata
-            .modified()
-            .unwrap()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        // Record the file as it is, then change its contents.
+        let contents = fs::read(source.join("msg/Thing.msg")).unwrap();
         write(
             &crate_dir.join(MANIFEST_FILENAME),
             &format!(
                 "{}\nmsg/Thing.msg:{}:{}\n",
                 source.display(),
-                metadata.len(),
-                mtime
+                contents.len(),
+                fnv1a64(&contents)
             ),
         );
         assert!(matches!(
@@ -688,6 +703,36 @@ mod tests {
         assert!(matches!(
             manifest_state(&crate_dir.join(MANIFEST_FILENAME)),
             ManifestState::Stale
+        ));
+    }
+
+    /// A checkout or a copy rewrites mtimes; the definitions are unchanged and
+    /// the bindings are still good.
+    #[test]
+    fn a_touched_but_unchanged_definition_is_fresh() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("share/my_msgs");
+        write(&source.join("msg/Thing.msg"), "int32 value\n");
+        let crate_dir = tmp.path().join("build/my_msgs");
+        fs::create_dir_all(&crate_dir).unwrap();
+
+        let contents = fs::read(source.join("msg/Thing.msg")).unwrap();
+        write(
+            &crate_dir.join(MANIFEST_FILENAME),
+            &format!(
+                "{}\nmsg/Thing.msg:{}:{}\n",
+                source.display(),
+                contents.len(),
+                fnv1a64(&contents)
+            ),
+        );
+
+        // Rewrite the same bytes, which moves the mtime.
+        write(&source.join("msg/Thing.msg"), "int32 value\n");
+
+        assert!(matches!(
+            manifest_state(&crate_dir.join(MANIFEST_FILENAME)),
+            ManifestState::Fresh
         ));
     }
 

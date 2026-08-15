@@ -874,19 +874,31 @@ fn collect_interface_records(
         let (Ok(metadata), Ok(relative)) = (entry.metadata(), path.strip_prefix(base)) else {{
             continue;
         }};
-        let Ok(modified) = metadata.modified() else {{
-            continue;
-        }};
-        let Ok(since_epoch) = modified.duration_since(std::time::UNIX_EPOCH) else {{
+        let Ok(contents) = std::fs::read(&path) else {{
             continue;
         }};
         out.insert(format!(
             "{{}}:{{}}:{{}}",
             relative.display(),
             metadata.len(),
-            since_epoch.as_nanos()
+            fnv1a64(&contents)
         ));
     }}
+}}
+
+/// FNV-1a, 64-bit, as 16 hex digits.
+///
+/// Freshness is keyed on what the definitions *say*, not when they were touched:
+/// a checkout or a copy rewrites mtimes without changing a byte. This crate has
+/// no dependencies and must not gain any, so the hash is spelled out here and in
+/// the generator that writes the manifest -- the two have to agree exactly.
+fn fnv1a64(data: &[u8]) -> String {{
+    let mut digest: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in data {{
+        digest ^= *byte as u64;
+        digest = digest.wrapping_mul(0x0000_0100_0000_01b3);
+    }}
+    format!("{{digest:016x}}")
 }}
 "#,
         package = package_name

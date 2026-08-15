@@ -411,6 +411,8 @@ COLCON_CARGO_ROS2_SKIP_STAMP_CHECK=1 to build anyway.
 
 **Solution**: `colcon build`. To build against the old bindings anyway (e.g. bisecting), set `COLCON_CARGO_ROS2_SKIP_STAMP_CHECK=1`.
 
+**Not triggered by**: a fresh `git clone` or `checkout`, a `cp -r`, a container mount, or `touch`. Freshness is keyed on the *contents* of the definitions, so rewriting their timestamps changes nothing.
+
 ### `unable to find library -l<package>__rosidl_typesupport_c`
 
 **Symptoms**:

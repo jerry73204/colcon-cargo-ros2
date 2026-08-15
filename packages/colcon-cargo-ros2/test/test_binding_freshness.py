@@ -17,6 +17,7 @@ Covers:
 """
 
 import os
+import pathlib
 import sys
 import types
 from pathlib import Path
@@ -136,6 +137,83 @@ def test_stamp_distinguishes_same_name_in_different_subdirs(tmp_path):
 # ---------------------------------------------------------------------------
 # Stamp comparison
 # ---------------------------------------------------------------------------
+
+
+def test_stamp_ignores_a_touch_that_changes_nothing(tmp_path):
+    """A checkout, a copy, or a `touch` rewrites mtimes without changing content.
+
+    Keying freshness on mtime meant every one of those made perfectly good
+    bindings look stale, and the escape hatch was a blunt environment variable.
+    """
+    share = _make_pkg(tmp_path / "share", msgs={"A.msg": "int32 x\n"})
+    before = _stamp(share)
+
+    os.utime(share / "msg" / "A.msg", (1_000_000, 1_000_000))
+
+    assert _stamp(share) == before
+
+
+def test_stamp_notices_content_changing_under_the_same_mtime(tmp_path):
+    """Same size, same mtime, different bytes -- what stat-based records missed.
+
+    The digests are memoised on the stat signature within a process, so this is
+    the across-builds contract: each colcon invocation reads the files once.
+    """
+    from colcon_cargo_ros2 import workspace_bindgen
+
+    share = _make_pkg(tmp_path / "share", msgs={"A.msg": "int32 x\n"})
+    path = share / "msg" / "A.msg"
+    stat = path.stat()
+    before = _stamp(share)
+
+    path.write_text("int32 y\n")  # identical length
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+    workspace_bindgen._FILE_DIGESTS.clear()  # a new build starts here
+
+    assert _stamp(share) != before
+
+
+def test_within_one_build_the_stat_signature_is_trusted(tmp_path):
+    """A file rewritten mid-build, preserving size and mtime, is not re-read.
+
+    Deliberate: the memo is what keeps repeated generation passes cheap on a
+    large workspace. The next build reads it and notices.
+    """
+    share = _make_pkg(tmp_path / "share", msgs={"A.msg": "int32 x\n"})
+    path = share / "msg" / "A.msg"
+    stat = path.stat()
+    before = _stamp(share)
+
+    path.write_text("int32 y\n")
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+
+    assert _stamp(share) == before
+
+
+def test_digest_is_reused_for_an_unchanged_file(tmp_path):
+    """Hashing is memoised per process, so repeated stamps cost a stat."""
+    from colcon_cargo_ros2 import workspace_bindgen
+
+    share = _make_pkg(tmp_path / "share", msgs={"A.msg": "int32 x\n"})
+    workspace_bindgen._FILE_DIGESTS.clear()
+
+    _stamp(share)
+    assert len(workspace_bindgen._FILE_DIGESTS) == 1
+
+    reads = []
+    original = pathlib.Path.read_bytes
+
+    def counting_read(self):
+        reads.append(self)
+        return original(self)
+
+    try:
+        pathlib.Path.read_bytes = counting_read
+        _stamp(share)
+    finally:
+        pathlib.Path.read_bytes = original
+
+    assert reads == []
 
 
 def test_stamp_matches_after_write(tmp_path):

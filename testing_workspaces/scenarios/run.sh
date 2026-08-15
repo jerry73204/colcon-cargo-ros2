@@ -245,6 +245,35 @@ scenario_stale_bindings() {
     expect_contains "$(log_for build)" "Finished" "colcon regenerates the changed package"
 }
 
+# Definitions touched but not changed -- a fresh checkout, a copy, a container
+# mount. Freshness is keyed on what the files say, so none of that is a change.
+scenario_touched_definitions() {
+    local dir
+    dir=$(fresh touched_definitions)
+    build "$dir" --packages-select local_msgs nested_node
+
+    # Same bytes, new mtime, exactly as `git checkout` would leave them.
+    local msg="$dir/src/local_msgs/msg/Reading.msg"
+    local contents
+    contents=$(cat "$msg")
+    printf '%s\n' "$contents" >"$msg"
+    touch "$msg"
+
+    cargo_in "$dir" src/nested/deep/deeper/nested_node build
+    expect_absent "$(log_for cargo)" "out of date" \
+        "a touched but unchanged definition is not stale"
+
+    # colcon agrees, and does not regenerate.
+    build "$dir" --packages-select local_msgs nested_node
+    expect_absent "$(log_for build)" "Interface definitions changed" \
+        "colcon does not regenerate for a touch"
+
+    # An actual edit is still caught.
+    echo "int32 sequence_id" >>"$msg"
+    cargo_in "$dir" src/nested/deep/deeper/nested_node build
+    expect_contains "$(log_for cargo)" "out of date" "an edit is still caught"
+}
+
 # build/ cleaned while the config still patches into it.
 scenario_wiped_build_dir() {
     local dir
@@ -483,6 +512,7 @@ ALL_SCENARIOS=(
     package_at_workspace_root
     runtime_only_dependency
     relocated_workspace
+    touched_definitions
 )
 
 # Scenarios that only read a healthy workspace share one build.

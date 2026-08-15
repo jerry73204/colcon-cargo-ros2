@@ -427,6 +427,20 @@ Ensures:
 
 ## Recent Architectural Improvements
 
+### Content-Based Binding Freshness (2026-08-15)
+
+**Problem** (issue #10): freshness records were `path:size:mtime_ns`, so a fresh `git clone`, a `cp -r`, a container mount or a stray `touch` made good bindings look stale — a regeneration at best, and a `build.rs` panic telling the user to re-run colcon at worst.
+
+**Solution**: records are now `path:size:<FNV-1a 64 of the contents>`. Timestamps no longer participate.
+
+**Measured first**, as the issue asked. Across the 69 interface packages a stock Humble install ships (1732 files, 1.2 MiB): stat 3 ms, digest 66 ms. A typical build touches four packages: 7 ms. Digests are memoised on the stat signature within a process, so the repeated generation passes a multi-package build makes cost a stat after the first.
+
+**Why FNV-1a and not sha256**: the generated crates have no dependencies and must not gain any, and their `build.rs` has to compute the identical value. Three implementations have to agree — Python, the generated `build.rs`, and `cargo ros2 doctor` — so the algorithm is spelled out in each, with shared reference vectors in the doctor tests.
+
+**Accepted limitation**: within a single build, a file rewritten with the same size *and* mtime is not re-read. The next build reads it. This is the memo's cost and it is tested as such.
+
+---
+
 ### Relocatable rpaths (2026-08-15)
 
 **Problem** (issue #9): rpath entries were absolute, so moving or renaming a built workspace broke every installed binary — verified: `error while loading shared libraries: liblocal_msgs__rosidl_typesupport_c.so`.

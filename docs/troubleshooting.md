@@ -228,7 +228,8 @@ cargo ros2 build
 Most of the failures below are diagnosed in one command, run from the package directory:
 
 ```bash
-cargo ros2 doctor
+colcon-cargo-ros2-doctor        # installed with the wheel
+cargo ros2 doctor               # equivalent, from a source checkout
 ```
 
 It walks the same chain cargo does — ROS environment, generated `.cargo/config.toml`, patch markers, patched crate directories, binding freshness, `package.xml` declarations — and stops at the first broken link with the fix for it. Exit status is non-zero when anything failed, so CI can gate on it.

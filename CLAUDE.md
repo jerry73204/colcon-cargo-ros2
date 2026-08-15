@@ -123,7 +123,7 @@ just install             # Install wheel with all tools
 **Why this matters**:
 - Templates in `build-tools/rosidl-codegen/templates/*.jinja` are embedded into `rosidl-bindgen` at compile time
 - Without cleaning, Askama may use cached template artifacts
-- The Python wheel bundles the Rust tools, so `just build-python` rebuilds everything
+- The Python wheel bundles the Rust code as one PyO3 extension module (`cargo_ros2_py`), so `just build-python` rebuilds everything. It ships no binaries: the `cargo ros2` subcommands are source-checkout only, and installed users reach the same operations through the `colcon-cargo-ros2` console script
 - Without reinstalling, the old wheel continues to be used
 
 #### Code Changes (Less Critical)
@@ -182,7 +182,7 @@ just test-workspaces
 # 4. Verify results
 ```
 
-**Common Mistake**: Forgetting to rebuild the wheel after making changes. The Python wheel bundles the Rust binaries, so changes won't take effect until you run `just build-python && just install`.
+**Common Mistake**: Forgetting to rebuild the wheel after making changes. The Rust code reaches Python as a compiled extension module, so changes won't take effect until you run `just build-python && just install`.
 
 ### `[package.metadata.ros]` Installation Support (2025-11-17)
 
@@ -355,7 +355,7 @@ rm -rf build/.colcon build/ros2_bindings
 colcon build --packages-select <package>
 ```
 
-**Why**: Templates are embedded at compile time. Python wheel bundles Rust binaries. Must reinstall to use updated tools.
+**Why**: Templates are embedded at compile time, inside the extension module the wheel ships. Must reinstall to use updated tools.
 
 ## Key Development Guidelines
 
@@ -426,6 +426,23 @@ Ensures:
 - Zero warnings
 
 ## Recent Architectural Improvements
+
+### Console Scripts for the CLI Operations (2026-08-15)
+
+**Problem** (issue #4): `packages/cargo-ros2` builds a `cargo-ros2` binary with `bindgen`, `install`, `clean` and `doctor` subcommands, but the wheel contains only the PyO3 extension module. Anyone who installed from PyPI had none of them, while CLAUDE.md claimed the wheel "bundles the Rust tools".
+
+**Solution**: `colcon_cargo_ros2/cli.py`, a thin argparse shell over the same PyO3 functions the build task calls, exposed as two console scripts:
+
+| Command | Equivalent |
+|---|---|
+| `colcon-cargo-ros2 bindgen\|install\|clean\|doctor` | `cargo ros2 <subcommand>` |
+| `colcon-cargo-ros2-doctor` | `cargo ros2 doctor` — its own name because it is what gets typed while a build is failing |
+
+Shipping the Rust binary itself was the alternative. It would mean building the binary separately and placing it in the wheel's `data/scripts/`, for all 30 platform/version wheels, to duplicate functionality the extension module already exposes.
+
+**Verified** by installing the built wheel into a clean venv and running both commands.
+
+---
 
 ### rosidl_runtime_rs Version Derived From the Workspace (2026-08-15)
 

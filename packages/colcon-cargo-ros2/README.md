@@ -269,10 +269,19 @@ The generated `.cargo/config.toml` is what makes this work. It sits at the Cargo
 When cargo reports something that does not match the above, run:
 
 ```bash
-cargo ros2 doctor
+colcon-cargo-ros2-doctor
 ```
 
-It checks the ROS environment, the generated config, every patched crate directory, binding freshness, and `package.xml` declarations, then prints the fix for the first thing that is wrong. See [docs/troubleshooting.md](docs/troubleshooting.md) for the individual error messages.
+It checks the ROS environment, the generated config, every patched crate directory, binding freshness, and `package.xml` declarations, then prints the fix for the first thing that is wrong.
+
+The same command installs a small CLI for the operations `colcon build` performs, should you need one of them on its own:
+
+```bash
+colcon-cargo-ros2 bindgen --package std_msgs --output build/bindings
+colcon-cargo-ros2 install --install-base install/my_node
+colcon-cargo-ros2 clean
+colcon-cargo-ros2 doctor
+``` See [docs/troubleshooting.md](docs/troubleshooting.md) for the individual error messages.
 
 ### IDE Support
 

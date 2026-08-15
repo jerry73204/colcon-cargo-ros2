@@ -56,8 +56,11 @@ Issues = "https://github.com/jerry73204/colcon-cargo-ros2/issues"
 Changelog = "https://github.com/jerry73204/colcon-cargo-ros2/releases"
 
 [project.scripts]
-# The wheel ships no binaries, so this is how an installed user reaches the
-# same diagnosis `cargo ros2 doctor` gives when built from source.
+# The wheel ships no binaries, so these are how an installed user reaches the
+# operations the `cargo ros2` subcommands provide from a source checkout.
+colcon-cargo-ros2 = "colcon_cargo_ros2.cli:main"
+# Kept as its own name because it is what someone types when a build has just
+# failed, and it is the entry point the troubleshooting docs point at.
 colcon-cargo-ros2-doctor = "colcon_cargo_ros2.doctor:main"
 
 [project.entry-points."colcon_core.package_augmentation"]

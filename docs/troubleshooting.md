@@ -127,22 +127,27 @@ AttributeError: module 'em' has no attribute 'BUFFERED_OPT'
 ModuleNotFoundError: No module named 'lark'
 ```
 
-**Cause**: this extension was installed into an isolated virtualenv. CMake runs
-whichever `python3` is first on `PATH`, so ROS's own generators execute under an
-interpreter that cannot see ROS's Python dependencies. `empy` compounds it:
-ROS needs 3.3.4 and `colcon-core` declares `empy` unpinned, so a fresh
-virtualenv resolves 4.x.
+**Cause**: this extension was installed into an isolated virtualenv. ROS's
+Python toolchain is the apt one — `python3-empy` (3.3.4), `python3-lark`,
+`python3-catkin-pkg`, installed in `/usr/lib/python3/dist-packages` — and its
+generators expect to find it. CMake runs whichever `python3` is first on
+`PATH`, so they execute under an interpreter that cannot see any of it.
 
-**Solution**: install with `pip install --user`, or create the virtualenv with
-system site packages so the existing ROS ones are visible:
+`empy` is the sharper edge: `rosidl_adapter` is written against 3.3.4, PyPI's
+4.x is not a drop-in, and `colcon-core` declares `empy` with no upper bound, so
+a virtualenv with nothing visible resolves 4.x.
+
+**Solution**: keep `dist-packages` on the path. Either install with
+`pip install --user`, or create the virtualenv with system site packages:
 
 ```bash
 python3 -m venv --system-site-packages ~/.venvs/ros
 ~/.venvs/ros/bin/pip install colcon-cargo-ros2
 ```
 
-Neither error mentions Rust or this extension, so it is easy to chase in the
-wrong direction.
+Either way pip sees the apt `empy` as satisfying the requirement and leaves it
+alone. Neither error mentions Rust or this extension, so it is easy to chase in
+the wrong direction.
 
 ---
 

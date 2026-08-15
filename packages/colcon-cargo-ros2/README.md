@@ -38,19 +38,28 @@ python3 -m venv --system-site-packages ~/.venvs/ros
 ```
 
 An isolated virtualenv breaks the *other* packages in your workspace, not this
-one. CMake picks up whichever `python3` is first on `PATH`, so an interface
-package built with `rosidl_generate_interfaces` then runs ROS's own generators
-under an interpreter that cannot see ROS's Python dependencies:
+one. ROS's Python toolchain comes from apt — `python3-empy`, `python3-lark`,
+`python3-catkin-pkg` and the rest, in `/usr/lib/python3/dist-packages` — and it
+expects to find exactly those. CMake runs whichever `python3` is first on
+`PATH`, so a package built with `rosidl_generate_interfaces` invokes ROS's own
+generators under an interpreter that cannot see them:
 
 ```
 ModuleNotFoundError: No module named 'lark'
 AttributeError: module 'em' has no attribute 'BUFFERED_OPT'
 ```
 
-The second one is `empy`: ROS needs 3.3.4, and `colcon-core` declares `empy`
-without an upper bound, so a fresh virtualenv resolves 4.x. `--system-site-packages`
-lets the existing 3.3.4 satisfy it. Neither error mentions Rust or this
-extension, which is why they are worth naming here.
+The second is `empy` specifically. `rosidl_adapter` is written against the
+3.3.4 that `python3-empy` ships; PyPI's 4.x is not a drop-in, and `colcon-core`
+declares `empy` with no upper bound, so a virtualenv with nothing visible
+resolves 4.x. `--system-site-packages` puts the apt packages back on the path,
+and pip then treats the requirement as already satisfied.
+
+`pip install --user` has the same effect for the same reason — dist-packages
+stays visible, so nothing gets replaced.
+
+Neither error mentions Rust or this extension, which is why they are worth
+naming here.
 
 ## Quick Start
 

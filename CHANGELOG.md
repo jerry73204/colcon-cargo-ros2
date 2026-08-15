@@ -62,6 +62,14 @@ each change is in the commit that made it and in `docs/phases/`.
 
 ### Fixed
 
+- **The `serde` feature did not reach dependency crates or long arrays.** Asking
+  for `features = ["serde"]` on a generated crate left its dependencies without
+  the feature, so a nested field failed `builtin_interfaces::msg::rmw::Time:
+  serde::Deserialize`. Separately, the RMW layer never annotated arrays longer
+  than 32 — serde has no impls for those — so any message with one, such as
+  `geometry_msgs/PoseWithCovariance`, failed at `[f64; 36]: serde::Deserialize`
+  once the feature reached it. Both found by building
+  [iceoryx2](https://github.com/eclipse-iceoryx/iceoryx2)'s ROS 2 demo.
 - **A field-less message generated a zero-sized Rust struct** while
   `rosidl_generator_c` gives it a one-byte placeholder. Anything embedding one —
   `std_msgs/Empty`, any constants-only message — read every later field from the

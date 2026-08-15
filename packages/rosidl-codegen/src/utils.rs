@@ -66,6 +66,17 @@ pub fn needs_big_array(message: &Message) -> bool {
     false
 }
 
+/// Whether a field is itself a fixed array too long for serde's built-in impls.
+///
+/// serde implements `Serialize`/`Deserialize` for arrays up to 32 elements only,
+/// so anything longer needs `#[serde(with = "serde_big_array::BigArray")]` on the
+/// field. This deliberately does not recurse: a sequence of a large array becomes
+/// a `Sequence<[T; N]>` in the RMW layer, which carries its own impl, and applying
+/// BigArray there would not compile.
+pub fn is_large_array(field_type: &FieldType) -> bool {
+    matches!(field_type, FieldType::Array { size, .. } if *size > 32)
+}
+
 fn has_large_array(field_type: &FieldType) -> bool {
     match field_type {
         FieldType::Array { size, .. } if *size > 32 => true,

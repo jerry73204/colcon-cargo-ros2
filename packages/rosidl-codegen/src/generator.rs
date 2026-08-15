@@ -6,7 +6,7 @@ use crate::templates::{
 use crate::types::{
     constant_value_to_rust, escape_keyword, rust_type_for_constant, rust_type_for_field,
 };
-use crate::utils::{extract_dependencies, needs_big_array, to_snake_case};
+use crate::utils::{extract_dependencies, is_large_array, needs_big_array, to_snake_case};
 use askama::Template;
 use rosidl_parser::{Action, FieldType, Message, Service};
 use std::collections::HashSet;
@@ -143,6 +143,7 @@ pub fn generate_message_package(
                 .as_ref()
                 .map(constant_value_to_rust)
                 .unwrap_or_default(),
+            is_large_array: is_large_array(&f.field_type),
         })
         .collect();
 
@@ -273,6 +274,7 @@ pub fn generate_service_package(
                     .as_ref()
                     .map(constant_value_to_rust)
                     .unwrap_or_default(),
+                is_large_array: is_large_array(&f.field_type),
             })
             .collect()
     };
@@ -400,6 +402,7 @@ pub fn generate_action_package(
                     .as_ref()
                     .map(constant_value_to_rust)
                     .unwrap_or_default(),
+                is_large_array: is_large_array(&f.field_type),
             })
             .collect()
     };
@@ -639,5 +642,34 @@ mod tests {
 
         let pkg = result.unwrap();
         assert!(pkg.cargo_toml.contains("geometry_msgs"));
+    }
+
+    /// serde has no impls for arrays longer than 32 elements. The idiomatic
+    /// layer has always annotated those fields; the RMW layer did not, so a
+    /// message like `geometry_msgs/PoseWithCovariance` (`float64[36]`) failed
+    /// to compile as soon as anything enabled the serde feature.
+    #[test]
+    fn test_large_arrays_annotated_in_both_layers() {
+        let msg = parse_message("float64[36] covariance\nfloat64[9] small\n").unwrap();
+        let pkg =
+            generate_message_package("test_msgs", "PoseWithCovariance", &msg, &HashSet::new())
+                .unwrap();
+
+        for (layer, src) in [
+            ("rmw", &pkg.message_rmw),
+            ("idiomatic", &pkg.message_idiomatic),
+        ] {
+            let annotated = src
+                .lines()
+                .zip(src.lines().skip(1))
+                .filter(|(attr, _)| attr.contains("serde_big_array::BigArray"))
+                .map(|(_, field)| field.trim().to_string())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                annotated,
+                vec!["pub covariance: [f64; 36],".to_string()],
+                "{layer} layer should annotate the 36-element array and nothing else"
+            );
+        }
     }
 }

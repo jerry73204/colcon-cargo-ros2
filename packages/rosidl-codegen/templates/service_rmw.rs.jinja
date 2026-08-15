@@ -36,7 +36,13 @@ extern "C" {
 #[derive(Debug, Clone, PartialEq)]
 pub struct {{ service_name }}Request {
     {% for field in request_fields %}
+    {% if field.is_large_array %}
+    {# serde has no impls for arrays longer than 32; see message_rmw.rs.jinja. #}
+    #[cfg_attr(feature = "serde", serde(with = "serde_big_array::BigArray"))]
     pub {{ field.name }}: {{ field.rust_type }},
+    {% else %}
+    pub {{ field.name }}: {{ field.rust_type }},
+    {% endif %}
     {% endfor %}
     {% if request_fields.is_empty() %}
     /// Matches the `uint8_t structure_needs_at_least_one_member` that
@@ -119,7 +125,13 @@ extern "C" {
 #[derive(Debug, Clone, PartialEq)]
 pub struct {{ service_name }}Response {
     {% for field in response_fields %}
+    {% if field.is_large_array %}
+    {# serde has no impls for arrays longer than 32; see message_rmw.rs.jinja. #}
+    #[cfg_attr(feature = "serde", serde(with = "serde_big_array::BigArray"))]
     pub {{ field.name }}: {{ field.rust_type }},
+    {% else %}
+    pub {{ field.name }}: {{ field.rust_type }},
+    {% endif %}
     {% endfor %}
     {% if response_fields.is_empty() %}
     /// Matches the `uint8_t structure_needs_at_least_one_member` that

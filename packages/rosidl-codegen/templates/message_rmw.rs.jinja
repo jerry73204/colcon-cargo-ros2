@@ -31,7 +31,15 @@ extern "C" {
 #[derive(Debug, Clone, PartialEq)]
 pub struct {{ message_name }} {
     {% for field in fields %}
+    {% if field.is_large_array %}
+    {# serde has no impls for arrays longer than 32; the idiomatic layer has
+       always handled this and the RMW layer did not, so any message with such a
+       field failed to compile as soon as a consumer enabled the serde feature. #}
+    #[cfg_attr(feature = "serde", serde(with = "serde_big_array::BigArray"))]
     pub {{ field.name }}: {{ field.rust_type }},
+    {% else %}
+    pub {{ field.name }}: {{ field.rust_type }},
+    {% endif %}
     {% endfor %}
     {% if fields.is_empty() %}
     /// Matches the `uint8_t structure_needs_at_least_one_member` that

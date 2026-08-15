@@ -53,6 +53,9 @@ pub struct RmwField {
     pub name: String,
     pub rust_type: String,
     pub default_value: String,
+    /// Needs `#[serde(with = "serde_big_array::BigArray")]`; see
+    /// [`crate::utils::is_large_array`].
+    pub is_large_array: bool,
 }
 
 /// Exhaustive enum representing all possible ROS 2 IDL field types

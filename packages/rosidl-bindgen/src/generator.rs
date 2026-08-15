@@ -716,15 +716,29 @@ serde = {{ version = "1.0", features = ["derive"], optional = true }}
         cargo_toml.push_str(&format!("{} = {{ path = \"../{}\" }}\n", crate_name, dep));
     }
 
-    // Add features section
+    // Add features section.
+    //
+    // The serde feature has to propagate to the message crates this one depends
+    // on. A std_msgs/Header holds a builtin_interfaces/Time, so deriving
+    // Serialize for Header is only possible if builtin_interfaces was built with
+    // its own serde feature on. Without the propagation a consumer asking for
+    // `std_msgs = { version = "*", features = ["serde"] }` gets:
+    //
+    //   error[E0277]: the trait bound `builtin_interfaces::msg::rmw::Time:
+    //                 serde::Deserialize<'de>` is not satisfied
     cargo_toml.push_str("\n[features]\ndefault = []\n");
+    let mut serde_feature = vec!["\"dep:serde\"".to_string()];
     if needs_big_array {
-        cargo_toml.push_str(
-            "serde = [\"dep:serde\", \"dep:serde-big-array\", \"rosidl_runtime_rs/serde\"]\n",
-        );
-    } else {
-        cargo_toml.push_str("serde = [\"dep:serde\", \"rosidl_runtime_rs/serde\"]\n");
+        serde_feature.push("\"dep:serde-big-array\"".to_string());
     }
+    serde_feature.push("\"rosidl_runtime_rs/serde\"".to_string());
+    let mut sorted_deps: Vec<&String> = dependencies.iter().collect();
+    sorted_deps.sort();
+    for dep in sorted_deps {
+        let crate_name = dep.replace('-', "_");
+        serde_feature.push(format!("\"{crate_name}/serde\""));
+    }
+    cargo_toml.push_str(&format!("serde = [{}]\n", serde_feature.join(", ")));
 
     cargo_toml.push_str(
         r#"
@@ -1032,6 +1046,38 @@ mod tests {
 
         let cargo_toml = std::fs::read_to_string(temp_dir.path().join("Cargo.toml")).unwrap();
         assert!(cargo_toml.contains("rosidl_runtime_rs = \"0.5\""));
+    }
+
+    /// A message crate's serde feature has to turn on serde in the message
+    /// crates it depends on, or a nested type from another package fails to
+    /// derive. Found by building eclipse-iceoryx/iceoryx2's ROS demo, which asks
+    /// for `std_msgs = { version = "*", features = ["serde"] }`.
+    #[test]
+    fn test_serde_feature_propagates_to_dependencies() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut deps = HashSet::new();
+        deps.insert("builtin_interfaces".to_string());
+        deps.insert("geometry_msgs".to_string());
+
+        generate_cargo_toml(temp_dir.path(), "std_msgs", "1.0.0", &deps, false, None).unwrap();
+
+        let cargo_toml = std::fs::read_to_string(temp_dir.path().join("Cargo.toml")).unwrap();
+        let serde_line = cargo_toml
+            .lines()
+            .find(|line| line.starts_with("serde = ["))
+            .expect("no serde feature");
+        assert!(
+            serde_line.contains("\"builtin_interfaces/serde\""),
+            "{serde_line}"
+        );
+        assert!(
+            serde_line.contains("\"geometry_msgs/serde\""),
+            "{serde_line}"
+        );
+        assert!(
+            serde_line.contains("\"rosidl_runtime_rs/serde\""),
+            "{serde_line}"
+        );
     }
 
     #[test]

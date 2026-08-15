@@ -21,3 +21,9 @@ geometry_msgs/Point[] unbounded_points
 geometry_msgs/Point[<=5] bounded_points
 
 float64[3] fixed_defaults [1.0, 2.0, 3.0]
+
+# serde implements its array traits up to 32 elements only, so anything longer
+# needs a BigArray annotation in both generated layers. geometry_msgs covers
+# this incidentally (PoseWithCovariance is float64[36]); this covers it on
+# purpose.
+float64[36] big_array

@@ -8,7 +8,7 @@ name = "consumer"
 path = "src/main.rs"
 
 [dependencies]
-iface_core = "*"
+iface_core = { version = "*", features = ["serde"] }
 iface_deps = "*"
 std_msgs = "*"
 geometry_msgs = "*"
@@ -20,3 +20,4 @@ action_msgs = "*"
 builtin_interfaces = "*"
 example_interfaces = "*"
 rosidl_runtime_rs = "0.6"
+serde_json = "1.0"

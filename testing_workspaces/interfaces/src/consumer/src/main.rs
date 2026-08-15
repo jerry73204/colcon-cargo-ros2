@@ -278,6 +278,40 @@ fn check_stock_packages() {
     println!("  stock interface packages ok");
 }
 
+fn check_serde_feature() {
+    // Asking for `features = ["serde"]` has to work through nested types from
+    // other packages: Nested holds a std_msgs/Header, which holds a
+    // builtin_interfaces/Time. If the feature does not propagate to those
+    // crates, this does not compile:
+    //
+    //   error[E0277]: the trait bound `builtin_interfaces::msg::rmw::Time:
+    //                 serde::Deserialize<'de>` is not satisfied
+    //
+    // Found by building eclipse-iceoryx/iceoryx2's ROS demo.
+    let mut value = iface_core::msg::Nested::default();
+    value.header.frame_id = "serde".to_string();
+    value.pose.pose.position.x = 1.5;
+    value.primitives.str_plain = "json".to_string();
+
+    let json = serde_json::to_string(&value).expect("serialize");
+    let back: iface_core::msg::Nested = serde_json::from_str(&json).expect("deserialize");
+
+    assert_eq!(back.header.frame_id, "serde", "cross-package nested field");
+    assert_eq!(back.pose.pose.position.x, 1.5);
+    assert_eq!(back.primitives.str_plain, "json");
+
+    // Arrays longer than 32 need `#[serde(with = "BigArray")]` on the field. The
+    // idiomatic layer always had it and the RMW layer did not, so this failed at
+    // `[f64; 36]: serde::Deserialize` once the feature reached a crate with one.
+    let mut wide = iface_core::msg::Collections::default();
+    wide.big_array[35] = 4.25;
+    let json = serde_json::to_string(&wide).expect("serialize wide");
+    let back: iface_core::msg::Collections = serde_json::from_str(&json).expect("deserialize wide");
+    assert_eq!(back.big_array[35], 4.25, "36-element array round-trips");
+
+    println!("  serde feature ok");
+}
+
 fn check_type_supports() {
     // Forces the link against each package's typesupport library, which is what
     // the -L flags and rpath in the generated config exist for.
@@ -305,6 +339,7 @@ fn main() {
     check_action();
     check_cross_package_interfaces();
     check_stock_packages();
+    check_serde_feature();
     check_type_supports();
     println!("consumer ok");
 }

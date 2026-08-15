@@ -216,7 +216,7 @@ just test-workspaces-heavy  # adds interfaces heavy tier + upstream
 
 A new job in `ci.yaml` on the `ros:humble-ros-base` container: install the wheel, then `just test-workspaces`. No `rosdep`, because the base tier depends only on what a stock image ships.
 
-**Measured**: a full base-tier run from clean takes about **7 minutes** on the development machine, most of it the scenario harness — eleven of its fourteen scenarios need their own colcon build, because a broken state cannot be shared. `interfaces` and `layouts` together are under a minute once bindings exist.
+**Measured**: a full base-tier run from clean took about **7 minutes** on the development machine, most of it the scenario harness — eleven of its fourteen scenarios need their own colcon build, because a broken state cannot be shared. Issue #7 cut that: workers share a cargo target directory and scenarios run concurrently, bringing the harness from 366s to 86s, so the base tier is now a couple of minutes. `interfaces` and `layouts` together are under a minute once bindings exist.
 
 The heavy tier runs on a schedule or behind a label, where `rosdep install` and an upstream clone are acceptable.
 

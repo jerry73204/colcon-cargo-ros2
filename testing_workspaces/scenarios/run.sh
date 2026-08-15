@@ -10,7 +10,15 @@
 # command, and greps for what should come out. Nothing here mutates the
 # committed tree.
 #
-# Usage: ./run.sh [scenario ...]     (no arguments runs every scenario)
+# Scenarios are isolated by construction -- each gets its own copy -- so they
+# also run concurrently. Two things keep the cost down:
+#
+#   * a shared cargo target directory per worker, so rosidl_runtime_rs and the
+#     other crates.io dependencies are compiled once rather than once per
+#     scenario (measured: 40s -> 20s for a cold scenario build)
+#   * -j workers in parallel, since nothing is shared but that pool
+#
+# Usage: ./run.sh [-j N] [scenario ...]   (no arguments runs every scenario)
 
 # -u stays off: ROS setup scripts read unset variables.
 set -o pipefail
@@ -22,17 +30,18 @@ readonly WORK="$ROOT/.work"
 readonly LOGS="$ROOT/.work/logs"
 readonly ROS_DISTRO_DEFAULT="${ROS_DISTRO:-humble}"
 
-pass=0
-fail=0
-failed_names=()
+readonly RESULTS="$WORK/results"
 current=setup
 
 # Logs are written beside the work directories, never inside the workspace
 # being examined.
 log_for() { echo "$LOGS/$current-$1.log"; }
 
-ok() { printf '  \033[32m✓\033[0m %s\n' "$1"; pass=$((pass + 1)); }
-bad() { printf '  \033[31m✗\033[0m %s\n' "$1"; fail=$((fail + 1)); failed_names+=("$current: $1"); }
+# Results go to a file per scenario rather than straight to the terminal:
+# scenarios run concurrently, and interleaved output would be unreadable. The
+# driver prints them in order as each finishes.
+ok() { printf 'PASS\t%s\n' "$1" >>"$RESULTS/$current"; }
+bad() { printf 'FAIL\t%s\n' "$1" >>"$RESULTS/$current"; }
 
 # expect_contains <haystack-file> <needle> <description>
 expect_contains() {
@@ -399,16 +408,53 @@ ALL_SCENARIOS=(
 # Scenarios that only read a healthy workspace share one build.
 NEEDS_BUILT=(doctor_healthy env_free_build env_free_run)
 
-requested=("$@")
+# Scenarios that assert on where artifacts land cannot have their target
+# directory redirected out from under them.
+NO_SHARED_TARGET=(cargo_args_release source_tree_clean)
+
+# A quarter of the cores: each scenario's colcon build parallelises internally,
+# so more workers than this mostly contend. Measured on 32 cores, cold: 366s
+# sequential, 198s at 4, 86s at 8, 84s at 14 -- the floor is the longest single
+# scenario, which runs two builds back to back.
+jobs=$(( $(nproc 2>/dev/null || echo 8) / 4 ))
+[ "$jobs" -lt 2 ] && jobs=2
+[ "$jobs" -gt 8 ] && jobs=8
+
+requested=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -j)
+            jobs="$2"
+            shift 2
+            ;;
+        -j*)
+            jobs="${1#-j}"
+            shift
+            ;;
+        *)
+            requested+=("$1")
+            shift
+            ;;
+    esac
+done
 [ ${#requested[@]} -eq 0 ] && requested=("${ALL_SCENARIOS[@]}")
 
-mkdir -p "$WORK" "$LOGS"
+rm -rf "$RESULTS"
+mkdir -p "$WORK" "$LOGS" "$RESULTS"
 
+for name in "${requested[@]}"; do
+    if ! declare -F "scenario_$name" >/dev/null; then
+        echo "unknown scenario: $name" >&2
+        exit 2
+    fi
+done
+
+# One healthy workspace, built once, for the scenarios that only read one.
 BUILT=""
 for name in "${requested[@]}"; do
     for shared in "${NEEDS_BUILT[@]}"; do
         if [ "$name" = "$shared" ] && [ -z "$BUILT" ]; then
-            printf '\n\033[1mpreparing a healthy workspace\033[0m\n'
+            printf '\033[1mpreparing a healthy workspace\033[0m\n'
             current=baseline
             BUILT=$(fresh healthy)
             if build "$BUILT"; then
@@ -420,17 +466,73 @@ for name in "${requested[@]}"; do
     done
 done
 
-for name in "${requested[@]}"; do
-    if ! declare -F "scenario_$name" >/dev/null; then
-        echo "unknown scenario: $name" >&2
-        exit 2
-    fi
+# run_one <scenario> <worker slot>
+#
+# The slot picks a cargo target directory. Sharing one per worker lets
+# rosidl_runtime_rs and the rest of the crates.io graph be compiled once instead
+# of once per scenario; the generated message crates still differ per scenario,
+# since they live at that scenario's path.
+run_one() {
+    local name="$1" slot="$2"
     current="$name"
-    printf '\n\033[1m%s\033[0m\n' "$name"
+    : >"$RESULTS/$name"
+
+    local shared=1
+    for excluded in "${NO_SHARED_TARGET[@]}"; do
+        [ "$name" = "$excluded" ] && shared=0
+    done
+    if [ "$shared" = 1 ]; then
+        export CARGO_TARGET_DIR="$WORK/target-pool/$slot"
+        mkdir -p "$CARGO_TARGET_DIR"
+    else
+        unset CARGO_TARGET_DIR
+    fi
+
+    local started=$SECONDS
     "scenario_$name"
+    printf 'TIME\t%s\n' "$((SECONDS - started))" >>"$RESULTS/$name"
+}
+
+printf '\033[2mrunning %d scenarios, %d at a time\033[0m\n' "${#requested[@]}" "$jobs"
+
+slot=0
+running=0
+for name in "${requested[@]}"; do
+    run_one "$name" "$slot" &
+    slot=$(( (slot + 1) % jobs ))
+    running=$((running + 1))
+    if [ "$running" -ge "$jobs" ]; then
+        wait -n 2>/dev/null || wait
+        running=$((running - 1))
+    fi
+done
+wait
+
+pass=0
+fail=0
+failed_names=()
+for name in baseline "${requested[@]}"; do
+    [ -f "$RESULTS/$name" ] || continue
+    duration=""
+    printf '\n\033[1m%s\033[0m\n' "$name"
+    while IFS=$'\t' read -r verdict text; do
+        case "$verdict" in
+            PASS)
+                printf '  \033[32m✓\033[0m %s\n' "$text"
+                pass=$((pass + 1))
+                ;;
+            FAIL)
+                printf '  \033[31m✗\033[0m %s\n' "$text"
+                fail=$((fail + 1))
+                failed_names+=("$name: $text")
+                ;;
+            TIME) duration="$text" ;;
+        esac
+    done <"$RESULTS/$name"
+    [ -n "$duration" ] && printf '  \033[2m%ss\033[0m\n' "$duration"
 done
 
-printf '\n%d passed, %d failed\n' "$pass" "$fail"
+printf '\n%d passed, %d failed in %ss\n' "$pass" "$fail" "$SECONDS"
 if [ "$fail" -gt 0 ]; then
     printf '\nfailures:\n'
     printf '  %s\n' "${failed_names[@]}"

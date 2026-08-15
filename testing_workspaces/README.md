@@ -55,9 +55,15 @@ mutates the committed tree; scratch copies live in `.work/`.
 ```bash
 cd scenarios
 just list          # the scenarios
-just run           # all of them (a few minutes: most need their own build)
+just run           # all of them, in parallel
 just run stale_bindings no_rpath
+just run -j 4      # fewer workers
 ```
+
+Scenarios are isolated by construction, so they run concurrently, and workers
+share a cargo target directory so the crates.io graph is compiled once rather
+than once per scenario. Measured on 32 cores from cold: 366s sequential, 86s
+now.
 
 ## Adding coverage
 

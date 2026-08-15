@@ -8,7 +8,7 @@
 default:
     @just --list
 
-# Run every scenario (a few minutes: most need their own colcon build)
+# Run every scenario, in parallel (pass -j N to change the worker count)
 run *NAMES:
     @./run.sh {{NAMES}}
 

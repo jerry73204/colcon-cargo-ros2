@@ -277,17 +277,21 @@ ws/src/my_robot/            ← Cargo workspace root
 
 #### Tasks
 
-- [x] Integration test: `my_robot_node` — verify `.cargo/config.toml` generated at workspace root
+The workspaces named here were replaced in Phase 10; the checks live on as
+assertions in `testing_workspaces/layouts/verify.sh` and the scenario harness,
+which is why they are ticked.
+
+- [x] Config at the workspace root — `scenarios/package_at_workspace_root` (the case `my_robot_node` covered)
   - [x] Build workspace with `colcon build`
   - [x] Verify `.cargo/config.toml` exists with correct patches
   - [x] Verify `cargo metadata` succeeds without `--config` flag
-  - [ ] Verify `cargo check` resolves all ROS message crates (blocked by rclrs/rosidl_runtime_rs version mismatch)
-- [ ] Integration test: `complex_workspace` — verify config at crate level (blocked by missing moveit_msgs)
-  - [ ] Build workspace with `colcon build`
-  - [ ] Verify `src/robot_controller/.cargo/config.toml` generated
-  - [ ] Verify relative paths are correct (`../../build/...`)
-  - [ ] Verify `cargo check` works from `src/robot_controller/`
-- [x] Integration test: `ros2_rust_examples` — verify per-crate configs
+  - [x] Verify `cargo check` resolves all ROS message crates. The blocker noted here — an `rclrs`/`rosidl_runtime_rs` version mismatch — was issue #3: the version is now derived from the workspace's own packages
+- [x] Config at crate level — `layouts/src/cargo_ws` and `layouts/src/nested/deep/deeper/nested_node` (the case `complex_workspace` covered, without its `moveit_msgs` dependency)
+  - [x] Build workspace with `colcon build`
+  - [x] Verify each crate's `.cargo/config.toml` is generated
+  - [x] Verify relative paths are correct — `verify.sh` asserts the five-level climb from the nested crate
+  - [x] Verify `cargo check` works from the crate directory
+- [x] Third-party crates — `testing_workspaces/upstream`, seven of the ros2-rust examples
   - [x] Build workspace with `colcon build`
   - [x] Verify each Rust crate gets its own `.cargo/config.toml`
   - [x] Verify `cargo metadata` succeeds from crate directory
@@ -296,17 +300,17 @@ ws/src/my_robot/            ← Cargo workspace root
   - [x] Run `colcon build`
   - [x] Verify user entries are preserved alongside generated markers
   - [x] Run `colcon build` again — verify idempotent
-- [ ] Test rebuild behavior
-  - [ ] Add a new ROS dependency to a crate
-  - [ ] Run `colcon build`
-  - [ ] Verify `.cargo/config.toml` updated with new patch entry
+- [x] Test rebuild behavior
+  - [x] Add a new ROS dependency to a crate
+  - [x] Run `colcon build`
+  - [x] Verify `.cargo/config.toml` updated with new patch entry — covered by `scenarios/undeclared_dep`, which adds a dependency and checks both what the config gains and what the build says when the `<depend>` tag is missing
 - [x] Add log message suggesting `.gitignore` for `.cargo/config.toml`
   - [x] Print hint on first generation (not on updates)
   - [x] Example: `"Generated .cargo/config.toml for IDE support. Consider adding it to .gitignore (paths are machine-specific)."`
-- [ ] Update README.md with IDE support section
-  - [ ] Explain the feature and how it works
-  - [ ] Document `.gitignore` recommendation
-  - [ ] Show example of user entries coexisting with generated entries
+- [x] Update README.md with IDE support section
+  - [x] Explain the feature and how it works — "Working with `cargo` Directly", which grew past IDE support into the whole manual-cargo story in Phase 9
+  - [x] Document `.gitignore` recommendation — since superseded: the config is added to `.gitignore` automatically, with `--no-gitignore` to opt out
+  - [x] Show example of user entries coexisting with generated entries
 
 ---
 
@@ -314,7 +318,7 @@ ws/src/my_robot/            ← Cargo workspace root
 
 **Functional**:
 - [x] After `colcon build`, IDEs can resolve all ROS message dependencies via `cargo metadata`
-- [ ] `cargo check` succeeds from any ROS Cargo package directory without `--config` flag (blocked by rclrs version mismatch in test workspaces)
+- [x] `cargo check` succeeds from any ROS Cargo package directory without `--config` flag. The `rclrs` version mismatch noted as blocking here was issue #3, fixed by deriving `rosidl_runtime_rs` from the workspace; `scenarios/env_free_build` now builds with nothing sourced at all
 - [x] User-written entries in `.cargo/config.toml` are preserved across builds
 - [x] Marker-delimited region is updated on each build (idempotent)
 - [x] Works for standalone crates, self-contained Cargo workspaces, and workspace members

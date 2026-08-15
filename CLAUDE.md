@@ -926,13 +926,16 @@ GitHub Actions workflows:
 
 ## Status
 
-**Version**: v0.4.0 (2026-03-03)
-**Progress**: 16/20 subphases (80%) | 280 tests passing (215 Rust + 65 Python) | Zero warnings
-**Latest**: Rust 2024 edition, consolidated `.cargo/config.toml`, release workflow audit ✅
-**Testing**: Validated with:
+**Version**: v0.4.1
+**Phases**: 0–3 and 5–10 complete; Phase 4 open on multi-distro support (4.2) and release preparation (4.3)
+**Tests**: 254 Rust, 229 Python, plus 101 assertions across the testing workspaces (interfaces 17, layouts 45, scenarios 39). Zero warnings, clippy `-D warnings` clean
+**Latest**: issues #3–#10 closed — the `rosidl_runtime_rs` version is derived from the workspace, the CLI reaches pip installs, `__version__` is derived, duplicate action constants are covered, the scenario harness runs 4× faster, runtime-only dependencies no longer warn, rpaths survive a moved workspace, and freshness is keyed on file contents
+**Testing**: validated with
+- `testing_workspaces/` — interfaces, layouts, scenarios (base tier, no rosdep), plus a heavy tier for test_msgs/nav2_msgs and the upstream ros2-rust examples
 - autoware_carla_bridge (118 packages) ✅
 - cuda_ndt_matcher (16 Autoware + standard packages) ✅
-- testing_workspaces/interfaces + layouts + scenarios ✅
+
+**Known open**: only Humble has been tested; Debian packaging (`stdeb.cfg`) is inert since `setup.py` was removed.
 
 **Versions**:
 - Rust workspace: v0.2.0 (rosidl-parser, rosidl-codegen, rosidl-bindgen, cargo-ros2), edition 2024

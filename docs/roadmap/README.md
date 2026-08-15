@@ -13,15 +13,15 @@
 
 ## Progress Summary
 
-**Overall Progress**: 22 of 30 subphases complete (73%) + Phase 1 & Phase 4 In Progress! 🚀
+**Overall Progress**: 57 of 59 subphases complete (97%). Phase 4 is the only one open: multi-distro support and release preparation.
 
 | Phase                                 | Status           | Progress             | Details |
 |---------------------------------------|------------------|----------------------|---------|
 | Phase 0: Project Preparation          | ✅ Complete      | 3/3 subphases        | [View](../phases/000-preparation.md) |
-| Phase 1: Native Rust IDL Generator    | 🔄 In Progress   | 6/7 subphases        | [View](../phases/001-idl-generator.md) |
+| Phase 1: Native Rust IDL Generator    | ✅ Complete      | 7/7 subphases        | [View](../phases/001-idl-generator.md) |
 | Phase 2: cargo-ros2 Tools             | ✅ Complete      | 2/2 subphases        | [View](../phases/002-tools.md) |
 | Phase 3: Production Features          | ✅ Complete      | 4/4 subphases        | [View](../phases/003-production.md) |
-| Phase 4: colcon Integration & Release | 🔄 In Progress   | 3/6 subphases        | [View](../phases/004-integration.md) |
+| Phase 4: colcon Integration & Release | 🔄 In Progress   | 6/8 subphases        | [View](../phases/004-integration.md) |
 | Phase 5: OMG IDL 4.2 Support          | ✅ Complete      | 4/4 subphases        | [View](../phases/005-idl-support.md) |
 | Phase 6: IDE Support                  | ✅ Complete      | 4/4 subphases        | [View](../phases/006-ide-support.md) |
 | Phase 7: cargo-ament-build Parity     | ✅ Complete      | 7/7 subphases        | [View](../phases/007-cargo-ament-build-parity.md) |
@@ -29,54 +29,48 @@
 | Phase 9: Manual `cargo` Workflow      | ✅ Complete      | 6/6 subphases        | [View](../phases/009-manual-cargo-workflow.md) |
 | Phase 10: Testing Workspaces          | ✅ Complete      | 7/7 subphases        | [View](../phases/010-testing-workspaces.md) |
 
-**Latest Achievement**: Phase 5 complete! 🎉 Full OMG IDL 4.2 support with lexer, parser, code generation, constant modules, @default annotations, and enums. Fixed constant module parsing order and RMW type path resolution. All 194 tests passing (100%)!
+**Latest**: Phases 8, 9 and 10 landed, then every issue they surfaced was closed (#3–#10). A plain `cargo build` now works after one `colcon build` with nothing sourced; failures are diagnosed by name; and three dense testing workspaces plus a scenario harness assert on the result. 254 Rust and 229 Python tests, plus 101 workspace assertions.
 
 ---
 
 ## Current Status
 
-**Phase**: Phase 1 & Phase 4 In Progress (22/30 subphases complete - 73%) 🚀
+**Audited 2026-08-16.** The per-phase checklists in `docs/phases/` were written as
+plans and were not kept ticked as work landed; where they conflict with a Status
+line, the Status line and the tests win.
 
-### Completed ✅
+### Complete ✅
 
-- ✅ **Phase 0** Complete (all 3 subphases) - Project setup, tooling, dependencies
-- ✅ **Phase 1** Subphases 1.1-1.6 Complete - Native Rust IDL Generator (parser, codegen, FFI bindings)
-- ✅ **Phase 2** Complete (all 2 subphases) - cargo-ros2 Tools (bindgen CLI, core workflow)
-- ✅ **Phase 3** Complete (all 4 subphases) - Production Features (services, ament, performance, docs)
-- ✅ **Phase 4.1** Complete - colcon-ros-cargo Integration (rewrote to use cargo-ros2 exclusively)
-- ✅ **Phase 4.1.1** Complete - config.toml Management Refactoring (centralized in cargo-ros2, no conflicts)
-- ✅ **Phase 4.1.2** Complete - Code Generation Bug Fixes (Clone trait bounds, snake_case module paths)
-- ✅ **Phase 5** Complete (all 4 subphases) - OMG IDL 4.2 Support (lexer, parser, codegen, integration - 100% tests)
+| Phase | What it delivered |
+|---|---|
+| 0 | Project structure, tooling, dependencies |
+| 1 | Native Rust IDL parser and generator, including 1.7's code-generation fixes (verified by the `interfaces` workspace) |
+| 2 | `cargo-ros2` tools |
+| 3 | Services, actions, ament installation |
+| 4.1–4.1.5 | colcon integration: single-writer `.cargo/config.toml`, workspace interface discovery, transitive dependency resolution, flat re-exports and associated constants |
+| 5 | OMG IDL 4.2 support |
+| 6 | IDE support via generated `.cargo/config.toml` |
+| 7 | `cargo-ament-build` installer parity |
+| 8 | Diagnosable builds: undeclared dependencies named, stale bindings refused, `doctor` |
+| 9 | A bare `cargo build`/`run` working with nothing sourced |
+| 10 | Testing workspaces that assert, plus CI |
 
-### In Progress 🔄
+### Open 🔄
 
-- 🔧 **Phase 1, Subphase 1.7** - Code Generation Fixes (remaining issues)
-  - Path resolution fix completed (2025-11-04)
-  - Module path format updated to pkg::ffi::msg::module::Type (2025-11-15)
-  - Discovered 3 remaining code generation issues during complex_workspace testing:
-    1. Missing cross-package dependencies in generated Cargo.toml
-    2. Missing module imports in generated code
-    3. Trait definition stubs don't match actual rosidl_runtime_rs
-  - Fix locations identified in cargo-ros2-bindgen and rosidl-codegen templates
-  - [See detailed work items](../phases/001-idl-generator.md#subphase-17-code-generation-fixes-1-week)
+- **Phase 4.2 — Multi-Distro Support.** Everything here has been developed and
+  tested against Humble alone. Iron and Jazzy are unverified, which also leaves
+  open the question from issue #6 of how nav2's `DockRobot` builds on a distro
+  whose rosidl rejects it here.
+- **Phase 4.3 — Release Preparation.** `cargo-deny`, a changelog, a security
+  policy, and publishing. The wheel workflow exists and builds 31 artifacts; what
+  is missing is the release hygiene around it.
 
-### Clarified ✅
+### Known loose ends
 
-- ✅ **Phase 4.1.3** - Workspace Interface Package Discovery
-  - **Initial concern was INCORRECT**: We thought discovering from install/ was broken
-  - **Reality**: Current implementation is CORRECT and aligns with colcon's design!
-  - **Key insight**: Colcon builds packages in topological dependency order, so dependencies are ALWAYS in install/ before dependents build
-  - Only needs documentation, no code changes required
-  - [See detailed analysis](../phases/004-integration.md#subphase-413-workspace-interface-package-discovery-1-week)
+- `packages/colcon-cargo-ros2/stdeb.cfg` is inert since `setup.py` was removed with issue #5; Debian packaging needs a decision.
+- `testing_workspaces/upstream`'s `rust_pubsub` is excluded because it declares `rclrs = "*"`; pinning it upstream would let it build.
 
-### Next Tasks 📋
-
-1. **Complete Subphase 1.7** (Code Generation Fixes) - blocking for complex_workspace
-2. **Document Subphase 4.1.3** (Add comments explaining colcon ordering) - 1 day
-3. **Implement Subphase 4.1.4** (Transitive Dependency Discovery) - future enhancement
-4. **Phase 4, Subphase 4.2** (Multi-Distro Support) - testing on Humble, Iron, Jazzy
-
-**Date**: 2025-11-15
+**Date**: 2026-08-16
 
 ---
 
@@ -97,11 +91,11 @@
 
 ---
 
-### Phase 1: Native Rust IDL Generator 🔄 [In Progress]
+### Phase 1: Native Rust IDL Generator ✅ [Complete]
 
 **Goal**: Implement pure Rust parser and code generator for ROS IDL files (.msg, .srv, .action).
 
-**Duration**: 5 weeks | **Status**: 🔄 In Progress (6/7 subphases)
+**Duration**: 5 weeks | **Status**: ✅ Complete (7/7 subphases)
 
 **Subphases**:
 - ✅ 1.1: IDL Parser - Messages (lexer, parser, AST)
@@ -110,7 +104,7 @@
 - ✅ 1.4: Parity Testing (comparison with rosidl_generator_rs)
 - ✅ 1.5: Parser Enhancements (default values, negative constants)
 - ✅ 1.6: FFI Bindings & Runtime Traits (complete C interop, all traits)
-- 🔧 1.7: Code Generation Fixes (cross-package deps, imports, trait stubs) - **IN PROGRESS**
+- ✅ 1.7: Code Generation Fixes (cross-package deps, imports, trait stubs)
 
 **Key Achievement**: Pure Rust implementation with no Python dependency, 100% message parsing success rate, complete FFI bindings.
 
@@ -156,28 +150,29 @@
 
 **Goal**: Seamless colcon integration and public release.
 
-**Duration**: 4 weeks | **Status**: 🔄 In Progress (3/6 subphases)
+**Duration**: 4 weeks | **Status**: 🔄 In Progress (6/8 subphases: 4.2 multi-distro and 4.3 release preparation remain)
 
 **Subphases**:
 - ✅ 4.1: colcon-ros-cargo Integration (rewrote to use cargo-ros2 exclusively)
 - ✅ 4.1.1: config.toml Management Refactoring (centralized, no race conditions)
 - ✅ 4.1.2: Code Generation Bug Fixes (Clone bounds, snake_case modules)
 - ✅ 4.1.3: Workspace Interface Package Discovery (clarified - current design is correct!)
-- 📋 4.1.4: Transitive Dependency Discovery (future enhancement)
-- 📋 4.2: Multi-Distro Support (Humble, Iron, Jazzy testing)
-- 📋 4.3: Release Preparation (security audit, crates.io publish, v0.1.0)
+- ✅ 4.1.4: Transitive Dependency Discovery (generated crates list what their definitions reference)
+- ✅ 4.1.5: Code Generation Ergonomics (flat re-exports, associated constants)
+- 📋 4.2: Multi-Distro Support — everything so far is Humble-only; Iron and Jazzy unverified
+- 📋 4.3: Release Preparation (cargo-deny, changelog, security policy, publishing)
 
-**Key Achievement**: Eliminated circular dependencies, centralized config.toml management, clarified workspace discovery design.
+**Key Achievement**: One writer for `.cargo/config.toml`, workspace and transitive dependency discovery, and an API shaped like the C++ and Python ones.
 
 **[View Full Phase Details →](../phases/004-integration.md)**
 
 ---
 
-### Phase 5: OMG IDL 4.2 Support 🔄 [In Progress]
+### Phase 5: OMG IDL 4.2 Support ✅ [Complete]
 
 **Goal**: Add native support for `.idl` files to enable advanced ROS 2 features and DDS interoperability.
 
-**Duration**: 6 weeks | **Status**: 🔄 In Progress (3/4 subphases)
+**Duration**: 6 weeks | **Status**: ✅ Complete (4/4 subphases)
 
 **Subphases**:
 - ✅ 5.1: IDL Lexer and Parser (OMG IDL 4.2 subset, module hierarchy, annotations)
@@ -191,7 +186,7 @@
 - Required for full ROS 2 compatibility and DDS interoperability
 - Real-world usage: packages like `rclrs_example_msgs` use `.idl` files directly
 
-**Key Achievement**: Complete IDL lexer/parser with 189/194 tests passing (97.4%)! Module path format updated to pkg::ffi::msg::module::Type for correct FFI hierarchy.
+**Key Achievement**: Complete IDL lexer and parser, with the module path format settled as `pkg::ffi::msg::module::Type` for a correct FFI hierarchy.
 
 **[View Full Phase Details →](../phases/005-idl-support.md)**
 

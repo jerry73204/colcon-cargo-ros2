@@ -2,6 +2,13 @@
 
 **Goal**: Implement pure Rust parser and code generator for ROS IDL files (.msg, .srv, .action).
 
+
+> **On the checklists below**: they were written as plans and were not kept
+> ticked as the work landed, so an unticked box here means "nobody updated this
+> line", not "not done". Each subphase's **Status** is authoritative, and where a
+> claim matters it names the test or testing workspace that backs it. Audited
+> 2026-08-16.
+
 **Duration**: 4 weeks
 
 ### Subphase 1.1: IDL Parser - Messages (2 weeks) ✅
@@ -513,15 +520,20 @@ Successfully implemented FFI bindings and runtime traits for all ROS 2 interface
 
 **Note**: The full Action trait with 12 helper methods is intentionally deferred to future work when needed for action server/client implementation. The current implementation provides all necessary FFI bindings and Message traits for action Goal, Result, and Feedback messages, which is sufficient for basic action handling.
 
-### Subphase 1.7: Code Generation Fixes (1 week)
+### Subphase 1.7: Code Generation Fixes (1 week) ✅
 
 **Goal**: Fix remaining code generation issues discovered during complex_workspace testing to enable full end-to-end compilation.
 
-**Status**: 🔧 **TODO** (Discovered 2025-11-04)
+**Status**: ✅ Complete. Recorded as TODO from 2025-11-04 until an audit in 2026-08 found every item had been fixed along the way without the doc being updated. Evidence, from the `interfaces` testing workspace:
+
+- Cross-package dependencies: `build/iface_deps/rosidl_cargo/iface_deps/Cargo.toml` lists `iface_core` and `builtin_interfaces`, extracted from the definitions that reference them.
+- Module imports: generated `lib.rs` carries `use rosidl_runtime_rs;` and the RMW files reach it as `crate::rosidl_runtime_rs`.
+- Trait method mismatches: the stub is gone; generated crates depend on the real `rosidl_runtime_rs` from crates.io, and `consumer` round-trips every shape through those traits at runtime.
+- Dependency extraction tests: `rosidl-codegen/src/utils.rs::test_extract_dependencies`.
 
 **Context**: During path resolution fix testing on complex_workspace, we discovered that while path resolution works correctly, the generated code has several issues preventing compilation:
 
-#### 1. Missing Cross-Package Dependencies
+#### 1. Missing Cross-Package Dependencies — fixed
 
 **Issue**: Generated Cargo.toml files don't include dependencies on other ROS packages referenced in message/service/action fields.
 
@@ -546,7 +558,7 @@ error[E0433]: failed to resolve: use of unresolved crate `std_msgs`
 - [ ] Handle dependency versions (use "*" for workspace-local packages)
 - [ ] Add recursive dependency resolution for transitive deps
 
-#### 2. Missing Module Imports
+#### 2. Missing Module Imports — fixed
 
 **Issue**: Generated RMW files don't import `rosidl_runtime_rs` module from crate root, causing trait implementation errors.
 
@@ -567,7 +579,7 @@ help: consider importing this module
 - [ ] Ensure idiomatic files also have necessary imports
 - [ ] Test that all trait implementations resolve correctly
 
-#### 3. Trait Method Mismatches
+#### 3. Trait Method Mismatches — fixed
 
 **Issue**: Generated trait implementations reference methods/types that don't exist in the trait definition.
 

@@ -5,6 +5,10 @@ on:
   push:
     branches: ['main']
   pull_request:
+  schedule:
+    # Nightly, for the tier that needs rosdep and network access.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -114,3 +118,53 @@ jobs:
         run: |
           source /opt/ros/humble/setup.bash
           just test-workspaces
+
+  workspaces-heavy:
+    name: Testing Workspaces (heavy tier)
+    runs-on: ubuntu-latest
+    container: ros:humble-ros-base
+    # Not on every pull request: this one installs third-party interface
+    # packages with rosdep and clones the upstream examples, so it needs network
+    # access and several minutes. Nightly, on demand, or by labelling a pull
+    # request `heavy`.
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'heavy')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-workspaces-heavy-cargo-${{ hashFiles('packages/Cargo.lock') }}
+
+      - name: Build and install wheel
+        run: |
+          pip install maturin
+          cd packages/colcon-cargo-ros2
+          maturin build --release --out dist
+          pip install dist/*.whl
+
+      # test_msgs and nav2_msgs are not in a stock image; the base tier is
+      # deliberately built so that it never needs this step. The recipe covers
+      # interfaces/heavy as well as the base sources.
+      - name: Install third-party interface packages
+        run: |
+          apt-get update
+          just install-test-deps
+
+      - name: Build and verify every tier
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          just test-workspaces-heavy

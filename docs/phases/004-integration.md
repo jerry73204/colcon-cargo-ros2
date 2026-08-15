@@ -2,6 +2,13 @@
 
 **Goal**: Seamless colcon integration and public release.
 
+
+> **On the checklists below**: they were written as plans and were not kept
+> ticked as the work landed, so an unticked box here means "nobody updated this
+> line", not "not done". Each subphase's **Status** is authoritative, and where a
+> claim matters it names the test or testing workspace that backs it. Audited
+> 2026-08-16.
+
 **Duration**: 4 weeks
 
 ### Subphase 4.1: colcon-ros-cargo Integration (2 weeks) ✅
@@ -67,7 +74,7 @@ colcon build --packages-select my_rust_pkg
 
 ### Subphase 4.1.1: config.toml Management Refactoring (1 week)
 
-**Status**: 🔧 **TODO** (Critical architectural fix discovered 2025-11-05)
+**Status**: ✅ Resolved, by a different route than this subphase proposed. Phases 6 and 9 made `colcon-cargo-ros2` the only writer of `.cargo/config.toml` -- one file per Cargo workspace carrying patches, build flags, environment and target-dir between comment markers. `colcon-ros-cargo` is no longer in the picture, and `build/ros2_cargo_config.toml` no longer exists, so the two-writer race this subphase was written to fix cannot occur.
 
 **Goal**: Centralize `.cargo/config.toml` management in cargo-ros2 to eliminate race conditions and conflicts with colcon-ros-cargo.
 
@@ -411,7 +418,7 @@ just quality
 
 ### Subphase 4.1.2: Fix Code Generation Bugs (3-5 days)
 
-**Status**: 🔴 BLOCKING - Discovered during testing of Subphase 4.1.1
+**Status**: ✅ Fixed. The `interfaces` workspace compiles and runs every shape these bugs affected -- Clone bounds on nested and sequence fields, snake_case module paths, and the rest -- and `consumer` asserts on the values rather than only compiling.
 
 #### Problem Summary
 
@@ -724,7 +731,7 @@ This is a great example of how understanding the build system's guarantees can s
 
 ### Subphase 4.1.4: Transitive Dependency Discovery (Future Work)
 
-**Status**: 📋 PLANNED - Future enhancement for ergonomic DX
+**Status**: ✅ Implemented. Generated crates list the packages their definitions reference (`iface_deps` depends on `iface_core`), and `_resolve_transitive_dependencies()` in `workspace_bindgen.py` walks package.xml to find them.
 
 **Note**: This is a separate issue from Subphase 4.1.3 (workspace interface discovery). This subphase is about automatically discovering dependencies *within* generated packages, not discovering packages in the workspace.
 
@@ -868,7 +875,7 @@ cargo ros2 build
 
 ### Subphase 4.1.5: Code Generation Ergonomics - Flat Re-exports & Associated Constants (1 week)
 
-**Status**: 📋 PLANNED - API ergonomics improvement to match C++/Python conventions
+**Status**: ✅ Implemented. Generated `msg/mod.rs` re-exports each type flat (`pub use all_primitives::AllPrimitives;`), and constants are associated items on the type (`iface_core::msg::Constants::MODE_IDLE`, `ExecuteResult::NONE`), which is what `consumer` asserts against.
 
 **Goal**: Improve generated Rust API ergonomics by using flat re-exports for messages and associated constants, matching ROS 2 C++ and Python conventions.
 

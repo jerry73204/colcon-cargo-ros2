@@ -181,7 +181,7 @@ Removing `is_library_package()` changes a public function in `packages/cargo-ros
 - [x] Missing `cargo` produces an actionable error before the build starts
 - [x] nightly rustfmt clean, zero clippy warnings, all Rust + Python tests pass
 - [x] `testing_workspaces/my_robot_node` builds and runs after `just clean && just build`
-- [ ] `testing_workspaces/complex_workspace` builds — blocked on `moveit_msgs` not being installed locally, needs `just install-deps`
+- [x] Testing workspaces build. `complex_workspace` was replaced in Phase 10 by `interfaces`, whose base tier needs no `rosdep`; the `moveit_msgs` dependency that blocked this was dropped rather than installed.
 
 ---
 

@@ -87,7 +87,7 @@ Successfully implemented cargo-ros2-bindgen command-line tool:
 - [x] ROS dependency discovery
   - [x] Parse Cargo.toml dependencies
   - [x] Check against ament_index
-  - [ ] Parse package.xml for transitive deps (not needed yet)
+  - [x] Parse package.xml for transitive deps — landed in the colcon extension instead of this tool: `_resolve_transitive_dependencies()` in `workspace_bindgen.py`
   - [x] Recursively discover dep tree
   - [x] Filter for interface packages only
   - [x] Detect cycles in dependency graph
@@ -116,7 +116,7 @@ Successfully implemented cargo-ros2-bindgen command-line tool:
   - [x] `cargo ros2 build` command
   - [x] `cargo ros2 check` command
   - [x] `--bindings-only` flag
-  - [ ] Forward args to cargo (after `--`) (future enhancement)
+  - [x] Forward args to cargo — as `colcon build --cargo-args ...`, which is where users need it
 
 - [x] Unit tests
   - [x] Test dependency discovery

@@ -223,8 +223,10 @@ The heavy tier runs on a schedule or behind a label, where `rosdep install` and 
 **Tasks**:
 
 - [x] `workspaces` job in `.github/workflows/ci.yaml` (base tier, every PR)
-- [x] Scheduled or label-gated job for the heavy tier
-- [x] Cache the ROS container layer and cargo registry between runs
+- [x] `workspaces-heavy` job: nightly `schedule`, `workflow_dispatch`, or a pull request labelled `heavy`. It installs `test_msgs` and `nav2_msgs` with rosdep and clones the upstream examples, so it needs network access the base tier does not
+- [x] Cache the cargo registry between runs (the ROS container image is pulled by the runner; there is no layer for us to cache)
+
+**Correction**: the two entries above were ticked when this phase was closed, before either was true. The heavy-tier job did not exist until issue #10 was finished, and the caching claim described something that is not ours to do. Both are now accurate.
 
 ---
 

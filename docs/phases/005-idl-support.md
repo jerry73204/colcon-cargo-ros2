@@ -2,6 +2,13 @@
 
 **Goal**: Add native support for `.idl` files (OMG IDL 4.2 subset) to enable advanced ROS 2 features and interoperability with native DDS applications.
 
+
+> **On the checklists below**: they were written as plans and were not kept
+> ticked as the work landed, so an unticked box here means "nobody updated this
+> line", not "not done". Each subphase's **Status** is authoritative, and where a
+> claim matters it names the test or testing workspace that backs it. Audited
+> 2026-08-16.
+
 **Duration**: 6 weeks
 
 **Motivation**:

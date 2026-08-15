@@ -29,10 +29,23 @@ months. Defining the shapes here keeps the base tier runnable anywhere; the
 genuinely third-party coverage lives in `heavy/`, outside `src/`, selected with
 `colcon build --base-paths src heavy`.
 
-## Known limitation
+## Duplicate constant names across action sections
 
-The same constant name in two sections of one action (as newer nav2 actions
-have) cannot be expressed here: rosidl's own C and C++ generators emit one enum
-per action and fail with "redeclaration of enumerator" before this project's
-generator sees the definition. That case is covered by the action template's
-unit tests instead.
+`Execute.action` declares `NONE` in both its result and feedback sections, which
+is the shape newer nav2 actions use (`DockRobot` defines `NONE` in both). The
+generated crate keeps them apart with a constant module per section, and
+`consumer` asserts each resolves to its own value.
+
+The two values differ deliberately, and that is not cosmetic. rosidl's parser
+binds a constant to a section by searching the parse tree for a *structurally
+equal* node (`_find_path` compares with `==`), so two identical declarations —
+same name **and** same value — are both filed under whichever section came
+first. The C generator then emits the same enumerator twice:
+
+```
+error: redeclaration of enumerator 'iface_core__action__Execute_Result__NONE'
+```
+
+Reproduced on Humble with a two-line action; giving the constants different
+values makes it build. Differing comments do not help. See
+`docs/troubleshooting.md`.

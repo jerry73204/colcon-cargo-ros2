@@ -60,8 +60,14 @@ assert_contains "$core/action/execute_idiomatic.rs" "BoundedSequence::try_from" 
 section "Constants"
 assert_contains "$core/msg/constants_idiomatic.rs" "pub const PROTOCOL: &'static str" \
     "string constants are &'static str, which is const-constructible"
-assert_contains "$core/action/execute_idiomatic.rs" "RESULT_NONE" "result constants generated"
-assert_contains "$core/action/execute_idiomatic.rs" "FEEDBACK_NONE" "feedback constants generated"
+# The same name in both sections: a single flat namespace would emit it once,
+# or twice and fail to compile.
+occurrences=$(grep -c "pub const NONE" "$core/action/execute_idiomatic.rs")
+if [ "$occurrences" = "2" ]; then
+    ok "the same constant name is generated once per action section"
+else
+    bad "expected NONE in two sections, found $occurrences"
+fi
 
 section "Cross-package references"
 assert_contains "$deps/msg/aggregate_rmw.rs" "iface_core" \

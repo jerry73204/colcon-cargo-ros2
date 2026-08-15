@@ -343,6 +343,36 @@ colcon build --rosidl-runtime-rs-version 0.5
 
 **Related**: `rclrs = "*"` cannot be matched at all, because cargo resolves it to whatever is newest. Pin it.
 
+### `redeclaration of enumerator` when building an action
+
+**Symptoms**: building your own interface package fails inside rosidl's C generator, before anything Rust-related runs:
+
+```
+build/my_msgs/rosidl_generator_c/my_msgs/action/detail/dock__struct.h:54:3:
+  error: redeclaration of enumerator 'my_msgs__action__Dock_Result__NONE'
+```
+
+**Cause**: two sections of the action declare a constant with the same name *and* the same value, for example `NONE=0` in both the result and the feedback section.
+
+rosidl's adapter handles this correctly — the intermediate `.idl` puts them in separate `Dock_Result_Constants` and `Dock_Feedback_Constants` modules. The parser then binds each constant back to a section by searching the parse tree for a structurally equal node, and two identical declarations compare equal, so both are filed under the section that appears first. The C generator emits that section's enum with the constant twice.
+
+**Workaround**: give the constants different values.
+
+```
+---
+uint16 NONE=0        # result
+uint16 FAILED=1
+bool success
+---
+uint16 NONE=9        # feedback, distinct value
+uint16 DOCKING=1
+float32 progress
+```
+
+Differing comments do not help; the values have to differ. Verified on Humble.
+
+**Not a limitation of this project**: the generated Rust keeps constants in a module per section, so duplicate names are fine once rosidl can produce the interface at all. `testing_workspaces/interfaces` covers that.
+
 ### Bindings are out of date
 
 **Symptoms**:

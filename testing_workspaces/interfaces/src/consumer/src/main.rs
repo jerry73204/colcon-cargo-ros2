@@ -190,9 +190,14 @@ fn check_action() {
         "bounded sequence in action feedback"
     );
 
-    // Per-section constants live in their own namespaces.
-    assert_eq!(iface_core::action::ExecuteResult::RESULT_NONE, 0);
-    assert_eq!(iface_core::action::ExecuteFeedback::FEEDBACK_RUNNING, 1);
+    // The same constant name in two sections must resolve per section, which is
+    // what the generated per-section constant modules are for. Same name,
+    // different values, so a collision would show up as a wrong value rather
+    // than a compile error.
+    assert_eq!(iface_core::action::ExecuteResult::NONE, 0, "result NONE");
+    assert_eq!(iface_core::action::ExecuteFeedback::NONE, 9, "feedback NONE");
+    assert_eq!(iface_core::action::ExecuteResult::SUCCEEDED, 1);
+    assert_eq!(iface_core::action::ExecuteFeedback::RUNNING, 1);
 
     println!("  actions ok");
 }

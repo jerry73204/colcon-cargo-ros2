@@ -1,21 +1,29 @@
-# Goal, result and feedback, each with bounded sequences and its own constants.
+# Goal, result and feedback, each with bounded sequences, and the *same*
+# constant name in two sections.
 #
-# Constants live in a separate module per section in the generated crate. The
-# stronger case -- the *same* constant name in two sections, as newer nav2
-# actions have -- cannot be expressed through rosidl_generate_interfaces: the
-# upstream C and C++ generators emit one enum per action and fail with
-# "redeclaration of enumerator" before the Rust generator sees the definition.
-# That case is covered by the action template's unit tests instead.
+# Per-section constant modules are what keep `NONE` in the result from
+# colliding with `NONE` in the feedback -- the shape newer nav2 actions use
+# (DockRobot defines NONE in both).
+#
+# The two values differ deliberately. rosidl's own parser binds a constant to a
+# section by searching the parse tree for a structurally equal node, so two
+# *identical* declarations (same name and same value) are both filed under the
+# first section and the C generator then emits a duplicate enumerator:
+#
+#   error: redeclaration of enumerator 'iface_core__action__Execute_Result__NONE'
+#
+# Differing values keep the declarations distinct, which is what makes this
+# case expressible at all. See docs/troubleshooting.md.
 
 geometry_msgs/Point[<=4] waypoints
 string label
 ---
-uint8 RESULT_NONE=0
-uint8 RESULT_SUCCEEDED=1
+uint8 NONE=0
+uint8 SUCCEEDED=1
 bool success
 geometry_msgs/Point[<=4] visited
 ---
-uint8 FEEDBACK_NONE=0
-uint8 FEEDBACK_RUNNING=1
+uint8 NONE=9
+uint8 RUNNING=1
 float32 progress
 geometry_msgs/Point[<=4] remaining

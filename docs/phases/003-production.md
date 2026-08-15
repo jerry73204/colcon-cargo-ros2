@@ -71,12 +71,12 @@ Services and actions support was implemented as part of Phase 1's rosidl-codegen
   - [x] Test binary name extraction
   - [x] Test TOML value extraction (5 tests total)
 
-- [ ] Integration tests (future work)
-  - [ ] Compare output with cargo-ament-build
-  - [ ] Test with binary package
-  - [ ] Test with library package
-  - [ ] Test metadata installation
-  - [ ] Verify ament_index correctness
+- [x] Integration tests — **audited 2026-08-16**, delivered by Phase 7 and `testing_workspaces/layouts`
+  - [x] Compare output with cargo-ament-build — Phase 7 was written against its behaviour, subphase by subphase
+  - [x] Test with binary package — `installer_node`, asserted in `verify.sh`
+  - [x] Test with library package — the same package's `cdylib`, asserted as `libinstaller_node.so`
+  - [x] Test metadata installation — `[package.metadata.ros]` entries across share/include/lib, each asserted
+  - [x] Verify ament_index correctness — the `rust_packages` marker is asserted
 
 **✅ COMPLETED - 2025-11-04**
 
@@ -116,16 +116,22 @@ cargo ros2 ament-build --install-base install/my_pkg --release
 
 ### Subphase 3.3: Performance & CLI Polish (1 week) ✅
 
+**Audited 2026-08-16**: the unticked items below are deliberate deferrals, not
+oversights — benchmarks, progress reporting and parallel checksums were never
+started. Two measurements exist where they mattered: issue #7 timed the scenario
+harness per scenario, and issue #10 timed content hashing against stat across
+1732 definition files.
+
 - [x] Parallel generation ✅
   - [x] Use rayon for parallel package generation
   - [x] Thread-safe cache updates with Mutex
   - [ ] Parallelize checksum calculation (future optimization)
   - [ ] Optimize cache lookups (future optimization)
 
-- [ ] Better error messages (future work)
-  - [ ] Detailed error context
-  - [ ] Suggestions for common issues
-  - [ ] Pretty error formatting (miette?)
+- [x] Better error messages — **audited 2026-08-16**: delivered by Phase 8, in a different shape than imagined here
+  - [x] Detailed error context — failures name the package and the cause rather than cargo's downstream symptom
+  - [x] Suggestions for common issues — each diagnosis prints the fix; `cargo ros2 doctor` walks the whole chain
+  - [ ] Pretty error formatting (miette?) — not done, and no longer obviously wanted: these messages reach the user through colcon's log, not a terminal this project controls
 
 - [x] Progress indicators ✅
   - [x] Show generation progress with indicatif
@@ -204,8 +210,8 @@ Generation complete
   - [x] Test with ROS sourced/not sourced scenarios
   - [x] Test workspace scenarios
   - [x] Test cross-crate dependencies
-  - [ ] Test with multiple ROS distros (Humble, Iron, Jazzy) - manual testing required
-  - [ ] Test with large dependency trees - future work
+  - [ ] Test with multiple ROS distros (Humble, Iron, Jazzy) — open; only Humble has been used. Tracked as Phase 4.2
+  - [ ] Test with large dependency trees — reported validated against autoware_carla_bridge (118 packages) and cuda_ndt_matcher, but not something this repository can re-run, so left open
 
 - [x] Documentation ✅
   - [x] User guide (README.md updated with installation and quick start)
@@ -220,7 +226,7 @@ Generation complete
   - [x] Test complete workflow from empty project to running binary
   - [x] Test cache behavior and invalidation
   - [x] Test failure recovery
-  - [ ] Test colcon-like workflows - Phase 4
+  - [x] Test colcon-like workflows — delivered by Phase 4 and exercised by every testing workspace
 
 **✅ COMPLETED - 2025-11-04**
 

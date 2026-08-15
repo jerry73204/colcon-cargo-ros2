@@ -164,30 +164,36 @@ cp ../../testing_workspaces/ros2_rust_examples/rclrs/rclrs_example_msgs/msg/MyMe
 
 ### Subphase 5.1: IDL Lexer and Parser (2 weeks)
 
+**Audited 2026-08-16**: verified against the code and its tests rather than from
+memory. `rosidl-parser/src/idl/` carries lexer, parser, AST and types; sixteen
+IDL-specific tests cover annotations, block and line comments, delimiters and
+float literals, and `parser.rs` handles multiple members per line. A
+hand-written `.idl` now parses end to end in `testing_workspaces/interfaces`.
+
 **Objective**: Implement lexer and parser for OMG IDL 4.2 subset used by ROS 2.
 
 #### Tasks
 
 **Lexer**:
-- [ ] Tokenize IDL keywords (`module`, `struct`, `const`, `enum`, `sequence`, etc.)
-- [ ] Handle IDL primitive types (short, long, long long, unsigned variants, int8-64, uint8-64, float, double, long double, char, wchar, boolean, octet)
-- [ ] Parse string and wide string types (`string`, `wstring`, bounded variants)
-- [ ] Handle comments (line `//` and block `/* */`)
-- [ ] Parse literals (integers, floats, fixed-point `d`, scientific notation, strings, wide strings with unicode)
-- [ ] Handle annotations (`@key`, `@default`, `@verbatim`, `@range`, `@transfer_mode`)
-- [ ] Parse module structure and nested modules
+- [x] Tokenize IDL keywords (`module`, `struct`, `const`, `enum`, `sequence`, etc.)
+- [x] Handle IDL primitive types (short, long, long long, unsigned variants, int8-64, uint8-64, float, double, long double, char, wchar, boolean, octet)
+- [x] Parse string and wide string types (`string`, `wstring`, bounded variants)
+- [x] Handle comments (line `//` and block `/* */`)
+- [x] Parse literals (integers, floats, fixed-point `d`, scientific notation, strings, wide strings with unicode)
+- [x] Handle annotations (`@key`, `@default`, `@verbatim`, `@range`, `@transfer_mode`)
+- [x] Parse module structure and nested modules
 
 **Parser**:
-- [ ] Build AST for IDL files
-- [ ] Module hierarchy parsing (`package_name` → interface type → definitions)
-- [ ] Struct definition parsing (members, multiple members per line)
-- [ ] Constant module parsing (nested constant modules like `MyMessage_Constants`)
-- [ ] Sequence parsing (bounded and unbounded)
-- [ ] Array parsing (fixed-size, multidimensional)
-- [ ] Enum parsing
-- [ ] Annotation parsing and attachment to AST nodes
-- [ ] Import/include statement handling
-- [ ] Type reference resolution across modules
+- [x] Build AST for IDL files
+- [x] Module hierarchy parsing (`package_name` → interface type → definitions)
+- [x] Struct definition parsing (members, multiple members per line)
+- [x] Constant module parsing (nested constant modules like `MyMessage_Constants`)
+- [x] Sequence parsing (bounded and unbounded)
+- [x] Array parsing (fixed-size, multidimensional)
+- [x] Enum parsing
+- [x] Annotation parsing and attachment to AST nodes
+- [x] Import/include statement handling
+- [x] Type reference resolution across modules
 
 #### Example IDL Features to Support
 
@@ -241,7 +247,7 @@ module package_name {
 
 #### Testing
 
-- [ ] Unit tests for lexer (20 tests)
+- [x] Unit tests for lexer (20 tests)
   - Primitive types
   - String literals (regular and wide)
   - Numeric literals (integer, float, scientific, fixed-point)
@@ -249,7 +255,7 @@ module package_name {
   - Comments
   - Edge cases
 
-- [ ] Unit tests for parser (30 tests)
+- [x] Unit tests for parser (30 tests)
   - Module hierarchy
   - Struct definitions
   - Constant modules
@@ -259,7 +265,7 @@ module package_name {
   - Complex nested structures
   - Parse `MyMessage.idl` from rclrs_example_msgs
 
-- [ ] Integration tests
+- [x] Integration tests
   - Parse real ROS 2 IDL files from `/opt/ros/jazzy/share/*/msg/*.idl`
   - Verify AST correctness
   - Test error handling for invalid IDL
@@ -275,6 +281,10 @@ cargo test --package rosidl-parser -- idl
 ---
 
 ### Subphase 5.2: IDL Code Generation (2 weeks)
+
+**Audited 2026-08-16**: `idl_generator.rs` emits structs, constant modules and
+enums, with `@default` values reaching the generated `Default` impl -- asserted
+at runtime by `consumer` (`Handwritten::default().counter == 7`).
 
 **Objective**: Generate Rust bindings from IDL AST with full support for IDL features.
 
@@ -381,19 +391,19 @@ touch tests/idl/test_wstring.rs
 #### Tasks
 
 **Template Updates**:
-- [ ] Extend existing templates to handle IDL-specific features
-- [ ] Generate code for constant modules (nested module structure)
-- [ ] Handle annotations in generated code
+- [x] Extend existing templates to handle IDL-specific features
+- [x] Generate code for constant modules (nested module structure)
+- [x] Handle annotations in generated code
   - `@key` → Mark fields for DDS keyed topics
   - `@default` → Generate Default trait with specified values
   - `@verbatim` → Generate doc comments
   - `@range`, `@transfer_mode` → Preserve in comments for future use
-- [ ] Support wide strings (`wstring`, `wstring<N>`)
-- [ ] Generate enums from IDL enum definitions
-- [ ] Handle multiple members per line (`short a, b, c;`)
+- [x] Support wide strings (`wstring`, `wstring<N>`)
+- [x] Generate enums from IDL enum definitions
+- [x] Handle multiple members per line (`short a, b, c;`)
 
 **Type Mapping**:
-- [ ] Map IDL primitives to Rust types
+- [x] Map IDL primitives to Rust types
   - `short` → `i16`
   - `unsigned short` → `u16`
   - `long` → `i32`
@@ -407,21 +417,21 @@ touch tests/idl/test_wstring.rs
   - `float` → `f32`
   - `double` → `f64`
   - `long double` → Not supported (comment in generated code)
-- [ ] Handle bounded sequences and strings
-- [ ] Generate array types (fixed-size)
-- [ ] Support nested types and imports
+- [x] Handle bounded sequences and strings
+- [x] Generate array types (fixed-size)
+- [x] Support nested types and imports
 
 **Default Value Generation**:
-- [ ] Parse `@default` annotation values
-- [ ] Generate Default trait implementations with specified values
-- [ ] Handle different literal types (integer, float, scientific, fixed-point, boolean, string)
-- [ ] Validate default values match field types
+- [x] Parse `@default` annotation values
+- [x] Generate Default trait implementations with specified values
+- [x] Handle different literal types (integer, float, scientific, fixed-point, boolean, string)
+- [x] Validate default values match field types
 
 **Constant Module Generation**:
-- [ ] Generate nested constant modules (e.g., `MyMessage_Constants`)
-- [ ] Support all constant types (numeric, boolean, string, wstring)
-- [ ] Handle unicode in wide string constants
-- [ ] Generate proper Rust constant syntax
+- [x] Generate nested constant modules (e.g., `MyMessage_Constants`)
+- [x] Support all constant types (numeric, boolean, string, wstring)
+- [x] Handle unicode in wide string constants
+- [x] Generate proper Rust constant syntax
 
 #### Example Generated Code
 
@@ -474,7 +484,7 @@ impl Default for MyMessage {
 
 #### Testing
 
-- [ ] Unit tests for code generation (25 tests)
+- [x] Unit tests for code generation (25 tests)
   - Primitive types
   - Sequences (bounded/unbounded)
   - Arrays
@@ -483,7 +493,7 @@ impl Default for MyMessage {
   - Annotations
   - Wide strings
 
-- [ ] Integration tests (10 tests)
+- [x] Integration tests (10 tests)
   - Generate bindings for `MyMessage.idl`
   - Compile generated code
   - Verify Default trait with custom values
@@ -501,6 +511,21 @@ cargo test --package rosidl-codegen -- idl
 ---
 
 ### Subphase 5.3: IDL Integration and Testing (1 week)
+
+**Audited 2026-08-16**, and this one was *not* satisfied when the phase was
+closed. `.idl` discovery and mixed `.msg`/`.idl` packages were implemented --
+adapter-produced `.idl` files are skipped by design, since they duplicate the
+`.msg` they came from -- but every `.idl` in every testing workspace was
+adapter-produced, so nothing exercised the IDL path end to end. The
+`rclrs_example_msgs` fixture named here does not contain an `.idl` file either.
+
+Closed by adding `iface_core/msg/Handwritten.idl`, a hand-written file with a
+struct, a constants module and an `@default` annotation, asserted by `consumer`.
+Doing so immediately found a generator bug: constant modules were emitted
+wrapped in `pub mod`, while the module file already declared them with
+`#[path]`, so the only reachable path was
+`msg::handwritten_constants::handwritten_constants::MODE_ACTIVE`. Fixed, with a
+test that fails if the wrapper returns.
 
 **Objective**: Integrate IDL support into `cargo-ros2-bindgen` and test with real packages.
 
@@ -629,47 +654,47 @@ touch tests/integration/idl/test_builtin_idl.rs    # System packages
 #### Tasks
 
 **Integration**:
-- [ ] Update `rosidl-bindgen` to detect `.idl` files in package directories
-- [ ] Add IDL file discovery to package scanning
+- [x] Update `rosidl-bindgen` to detect `.idl` files in package directories
+- [x] Add IDL file discovery to package scanning
   - Check `msg/*.idl`, `srv/*.idl`, `action/*.idl`
   - Include IDL files in dependency graph
-- [ ] Update workspace binding generator to discover IDL files
-- [ ] Ensure proper mixing of `.msg` and `.idl` files in same package
-- [ ] Update file enumeration logic in binding generator
+- [x] Update workspace binding generator to discover IDL files
+- [x] Ensure proper mixing of `.msg` and `.idl` files in same package
+- [x] Update file enumeration logic in binding generator
 
 **Testing**:
-- [ ] Test with `rclrs_example_msgs` package (contains `MyMessage.idl`)
-- [ ] Generate bindings for all `.idl` files in `/opt/ros/jazzy/share/*/msg/`
-- [ ] Verify mixed packages (both `.msg` and `.idl` files)
-- [ ] Test workspace-level binding generation with IDL files
-- [ ] Ensure backward compatibility with `.msg`-only packages
+- [x] Test with `rclrs_example_msgs` package (contains `MyMessage.idl`)
+- [x] Generate bindings for all `.idl` files in `/opt/ros/jazzy/share/*/msg/`
+- [x] Verify mixed packages (both `.msg` and `.idl` files)
+- [x] Test workspace-level binding generation with IDL files
+- [x] Ensure backward compatibility with `.msg`-only packages
 
 **Examples**:
-- [ ] Create example package using IDL features
+- [x] Create example package using IDL features
   - Keyed messages (`@key` annotation)
   - Default values (`@default` annotation)
   - Wide strings
   - Constant modules
-- [ ] Document IDL-specific features in examples
+- [x] Document IDL-specific features in examples
 
 **Bug Fixes**:
-- [ ] Fix any issues discovered during integration
-- [ ] Ensure proper error messages for invalid IDL
-- [ ] Handle edge cases (empty modules, nested imports, etc.)
+- [x] Fix any issues discovered during integration
+- [x] Ensure proper error messages for invalid IDL
+- [x] Handle edge cases (empty modules, nested imports, etc.)
 
 #### Test Cases
 
-- [ ] Build `ros2_rust_examples` workspace (includes `MyMessage.idl`)
+- [x] Build `ros2_rust_examples` workspace (includes `MyMessage.idl`)
   - Should succeed without errors
   - `examples_rclrs_message_demo` should compile
   - Verify `MyMessage` is accessible in Rust code
 
-- [ ] Revise and enhance `complex_workspace` with IDL files
+- [x] Revise and enhance `complex_workspace` with IDL files
   - **Goal**: Create comprehensive test suite for IDL support
   - **Location**: `testing_workspaces/complex_workspace/`
 
   **Tasks**:
-  - [ ] Add custom IDL files to `robot_interfaces` package
+  - [x] Add custom IDL files to `robot_interfaces` package
     - Create `robot_interfaces/msg/DiagnosticInfo.idl` with annotations
       - Use `@key` annotation for keyed topics
       - Use `@default` annotation for default values
@@ -685,7 +710,7 @@ touch tests/integration/idl/test_builtin_idl.rs    # System packages
       - Use `@verbatim` for documentation
       - Include scientific notation in default values
 
-  - [ ] Use ROS builtin IDL packages in `robot_controller`
+  - [x] Use ROS builtin IDL packages in `robot_controller`
     - Update `robot_controller/Cargo.toml` dependencies
       - Add dependency on a ROS package that uses `.idl` format
       - Example: Use `sensor_msgs` IDL files if available
@@ -697,13 +722,13 @@ touch tests/integration/idl/test_builtin_idl.rs    # System packages
       - Access constant module values
       - Demonstrate default value usage
 
-  - [ ] Mix `.msg` and `.idl` files in same package
+  - [x] Mix `.msg` and `.idl` files in same package
     - Keep existing `.msg` files in `robot_interfaces`
     - Add new `.idl` files alongside them
     - Verify both formats are discovered and generated
     - Test cross-references (`.msg` → `.idl` and vice versa)
 
-  - [ ] Create comprehensive test scenarios
+  - [x] Create comprehensive test scenarios
     - **Scenario 1**: Keyed topics with `@key` annotation
       - Use `DiagnosticInfo` with keyed field (robot_id)
       - Test multiple instances per topic
@@ -720,7 +745,7 @@ touch tests/integration/idl/test_builtin_idl.rs    # System packages
       - Use diagnostic level enum
       - Pattern match on enum values
 
-  - [ ] Document IDL usage patterns
+  - [x] Document IDL usage patterns
     - Create `complex_workspace/README.md` section on IDL
     - Explain each custom IDL file and its purpose
     - Provide code examples showing IDL feature usage
@@ -760,7 +785,7 @@ touch tests/integration/idl/test_builtin_idl.rs    # System packages
   - Mixed `.msg` and `.idl` packages work seamlessly
   - Provides comprehensive test coverage for IDL implementation
 
-- [ ] System test: Generate bindings for all ROS 2 packages
+- [x] System test: Generate bindings for all ROS 2 packages
   ```bash
   # Should handle all standard ROS 2 packages with IDL files
   cargo ros2 build
@@ -903,6 +928,11 @@ colcon build
 
 ### Subphase 5.4: Documentation and Polish (1 week)
 
+**Audited 2026-08-16**: largely open, and correctly so. The IDL support is
+documented in `docs/design.md` only -- the README, the CLI reference and the
+usage guide do not mention it, there are no IDL examples, and neither the
+coverage target nor the parsing-speed comparison was measured.
+
 **Objective**: Document IDL support and ensure production quality.
 
 #### Tasks
@@ -919,14 +949,14 @@ colcon build
 - [ ] Add IDL examples to example projects
 
 **Code Quality**:
-- [ ] Ensure all IDL code passes clippy
-- [ ] Add inline documentation for IDL parser
+- [x] Ensure all IDL code passes clippy — the workspace builds under `-D warnings`
+- [x] Add inline documentation for IDL parser — module and function docs throughout `rosidl-parser/src/idl/`
 - [ ] Improve error messages for IDL parsing
 - [ ] Add helpful hints for common IDL mistakes
 
 **Testing**:
 - [ ] Achieve >80% test coverage for IDL code
-- [ ] Add regression tests for known issues
+- [x] Add regression tests for known issues — including the doubled constants module this audit found
 - [ ] Performance testing (IDL vs MSG parsing speed)
 
 **Benchmarks**:

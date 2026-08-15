@@ -723,6 +723,12 @@ class WorkspaceBindingGenerator:
     def _find_workspace_interface_packages(self, required_packages: set):
         """Find interface packages in the workspace from source directories.
 
+        Reading the *source* tree rather than install/ is deliberate. colcon
+        builds in topological order, so an interface package is installed before
+        anything that depends on it -- but binding generation runs from the first
+        Rust package's build task, which may be before that package's own build
+        has finished. The sources are there either way.
+
         This handles workspace-local packages that haven't been installed yet.
         Also discovers their dependencies to ensure complete binding generation.
 

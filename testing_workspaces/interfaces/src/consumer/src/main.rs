@@ -85,6 +85,28 @@ fn check_collections() {
     println!("  collections ok");
 }
 
+fn check_handwritten_idl() {
+    // Everything else here reaches the generator through .msg/.srv/.action.
+    // Adapter-produced .idl files are skipped by design, so only a hand-written
+    // one exercises the IDL path end to end.
+    let mut value = iface_core::msg::Handwritten::default();
+    assert_eq!(value.counter, 7, "@default(value=7) from the IDL was lost");
+    assert!(!value.enabled);
+
+    value.label = "from idl".to_string();
+    value.ratio = 2.5;
+    let back = round_trip(value.clone());
+    assert_eq!(back.label, "from idl");
+    assert_eq!(back.ratio, 2.5);
+    assert_eq!(back.counter, 7);
+
+    // Constants declared in an IDL constants module reach the crate too.
+    assert_eq!(iface_core::msg::handwritten_constants::MODE_ACTIVE, 3);
+    assert_eq!(iface_core::msg::handwritten_constants::PROTOCOL, "idl");
+
+    println!("  hand-written IDL ok");
+}
+
 fn check_constants() {
     assert_eq!(iface_core::msg::Constants::MODE_IDLE, 0);
     assert_eq!(iface_core::msg::Constants::MODE_ACTIVE, 1);
@@ -275,6 +297,7 @@ fn check_type_supports() {
 fn main() {
     check_primitives();
     check_collections();
+    check_handwritten_idl();
     check_constants();
     check_fieldless_layout();
     check_nested();

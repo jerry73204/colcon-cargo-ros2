@@ -11,6 +11,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/AllPrimitives.msg"
   "msg/Collections.msg"
   "msg/Constants.msg"
+  "msg/Handwritten.idl"
   "msg/Layout.msg"
   "msg/Marker.msg"
   "msg/Nested.msg"

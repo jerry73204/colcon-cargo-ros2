@@ -1,0 +1,25 @@
+// A hand-written IDL file, not one the adapter produced from a .msg.
+//
+// Everything else in this workspace reaches the generator through .msg/.srv/
+// .action; the .idl path had unit tests but nothing exercising it end to end.
+// Generation skips adapter-produced .idl files by design, so only a file like
+// this one reaches it.
+
+module iface_core {
+  module msg {
+    module Handwritten_Constants {
+      const uint8 MODE_IDLE = 0;
+      const uint8 MODE_ACTIVE = 3;
+      const string PROTOCOL = "idl";
+    };
+
+    struct Handwritten {
+      @default(value=7)
+      int32 counter;
+
+      string label;
+      double ratio;
+      boolean enabled;
+    };
+  };
+};

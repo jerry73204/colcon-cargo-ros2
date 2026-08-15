@@ -74,6 +74,16 @@ colcon build --packages-select my_rust_pkg
 
 ### Subphase 4.1.1: config.toml Management Refactoring (1 week)
 
+**Audited 2026-08-16 — superseded, not outstanding.** Every item below is struck
+through because it describes an architecture that was never built: modifying
+`colcon-ros-cargo`, keeping `colcon-cargo` as a base class, and adding a
+`cargo ros2 ament-build` subcommand with `--lookup-in-workspace`. What exists
+instead is a standalone colcon extension implementing `TaskExtensionPoint`
+directly, calling into a PyO3 module, and writing exactly one
+`.cargo/config.toml` per Cargo workspace. The problem this subphase existed to
+solve -- two systems writing that file -- cannot occur, because there is only
+one writer. The list is kept as a record of what was considered.
+
 **Status**: ✅ Resolved, by a different route than this subphase proposed. Phases 6 and 9 made `colcon-cargo-ros2` the only writer of `.cargo/config.toml` -- one file per Cargo workspace carrying patches, build flags, environment and target-dir between comment markers. `colcon-ros-cargo` is no longer in the picture, and `build/ros2_cargo_config.toml` no longer exists, so the two-writer race this subphase was written to fix cannot occur.
 
 **Goal**: Centralize `.cargo/config.toml` management in cargo-ros2 to eliminate race conditions and conflicts with colcon-ros-cargo.
@@ -113,25 +123,25 @@ All of this can be replicated directly in colcon-ros-cargo in ~100 lines.
 
 **Tasks**:
 
-- [ ] Remove colcon-cargo dependency from colcon-ros-cargo
-  - [ ] Update `colcon-ros-cargo/setup.cfg` - Remove `colcon-cargo` from `install_requires`
-  - [ ] Remove `toml` dependency (no longer needed)
+- ~~Remove colcon-cargo dependency from colcon-ros-cargo~~
+  - ~~Update `colcon-ros-cargo/setup.cfg` - Remove `colcon-cargo` from `install_requires`~~
+  - ~~Remove `toml` dependency (no longer needed)~~
 
-- [ ] Rewrite AmentCargoBuildTask to not inherit from CargoBuildTask
-  - [ ] Implement `TaskExtensionPoint` directly
-  - [ ] Copy essential functionality from colcon-cargo:
-    - [ ] `async build()` method structure
-    - [ ] `add_arguments()` for `--cargo-args`
-    - [ ] CARGO_EXECUTABLE discovery
-  - [ ] Remove all config.toml management code:
-    - [ ] Delete `write_cargo_config_toml()` function
-    - [ ] Delete `find_workspace_cargo_packages()` function
-    - [ ] Delete `find_installed_cargo_packages()` function
-  - [ ] Simplify to pure orchestration (~100 lines total):
-    - [ ] Check for cargo-ros2 existence
-    - [ ] Set up AMENT_PREFIX_PATH environment hook
-    - [ ] Invoke `cargo ros2 ament-build` command
-    - [ ] Create environment scripts
+- ~~Rewrite AmentCargoBuildTask to not inherit from CargoBuildTask~~
+  - ~~Implement `TaskExtensionPoint` directly~~
+  - ~~Copy essential functionality from colcon-cargo:~~
+    - ~~`async build()` method structure~~
+    - ~~`add_arguments()` for `--cargo-args`~~
+    - ~~CARGO_EXECUTABLE discovery~~
+  - ~~Remove all config.toml management code:~~
+    - ~~Delete `write_cargo_config_toml()` function~~
+    - ~~Delete `find_workspace_cargo_packages()` function~~
+    - ~~Delete `find_installed_cargo_packages()` function~~
+  - ~~Simplify to pure orchestration (~100 lines total):~~
+    - ~~Check for cargo-ros2 existence~~
+    - ~~Set up AMENT_PREFIX_PATH environment hook~~
+    - ~~Invoke `cargo ros2 ament-build` command~~
+    - ~~Create environment scripts~~
 
 **Result**: colcon-ros-cargo becomes simple delegation layer with no config.toml logic.
 
@@ -139,30 +149,30 @@ All of this can be replicated directly in colcon-ros-cargo in ~100 lines.
 
 **Tasks**:
 
-- [ ] Add `--lookup-in-workspace` flag to `cargo ros2 ament-build`
-  - [ ] Update `Ros2Command::AmentBuild` struct in `cargo-ros2/src/main.rs`
-  - [ ] Add `lookup_in_workspace: bool` field
-  - [ ] Update `ament_build()` function signature
+- ~~Add `--lookup-in-workspace` flag to `cargo ros2 ament-build`~~
+  - ~~Update `Ros2Command::AmentBuild` struct in `cargo-ros2/src/main.rs`~~
+  - ~~Add `lookup_in_workspace: bool` field~~
+  - ~~Update `ament_build()` function signature~~
 
-- [ ] Port package discovery functions to Rust
-  - [ ] Add `discover_workspace_packages()` in `cargo-ros2/src/lib.rs`
-    - [ ] Walk workspace directory recursively
-    - [ ] Find all `Cargo.toml` files
-    - [ ] Skip `build/` dirs (has `COLCON_IGNORE`)
-    - [ ] Skip `install/` dirs (has `setup.sh`)
-    - [ ] Extract package name from `[package]` section
-    - [ ] Return `HashMap<String, PathBuf>` mapping package names to paths
-  - [ ] Add `discover_installed_ament_packages()` in `cargo-ros2/src/lib.rs`
-    - [ ] Parse `AMENT_PREFIX_PATH` environment variable
-    - [ ] For each prefix, check `share/ament_index/resource_index/rust_packages/`
-    - [ ] Return `HashMap<String, PathBuf>` mapping package names to `prefix/share/pkg/rust`
+- ~~Port package discovery functions to Rust~~
+  - ~~Add `discover_workspace_packages()` in `cargo-ros2/src/lib.rs`~~
+    - ~~Walk workspace directory recursively~~
+    - ~~Find all `Cargo.toml` files~~
+    - ~~Skip `build/` dirs (has `COLCON_IGNORE`)~~
+    - ~~Skip `install/` dirs (has `setup.sh`)~~
+    - ~~Extract package name from `[package]` section~~
+    - ~~Return `HashMap<String, PathBuf>` mapping package names to paths~~
+  - ~~Add `discover_installed_ament_packages()` in `cargo-ros2/src/lib.rs`~~
+    - ~~Parse `AMENT_PREFIX_PATH` environment variable~~
+    - ~~For each prefix, check `share/ament_index/resource_index/rust_packages/`~~
+    - ~~Return `HashMap<String, PathBuf>` mapping package names to `prefix/share/pkg/rust`~~
 
-- [ ] Unify config.toml writing in `ament_build()` function
-  - [ ] Collect workspace packages (if `--lookup-in-workspace`)
-  - [ ] Collect installed ament packages (from env)
-  - [ ] Generate bindings (adds to patches via `workflow.run()`)
-  - [ ] **Single call to `patch_cargo_config()`** with all patches combined
-  - [ ] Ensure idempotent behavior (same patches = same output)
+- ~~Unify config.toml writing in `ament_build()` function~~
+  - ~~Collect workspace packages (if `--lookup-in-workspace`)~~
+  - ~~Collect installed ament packages (from env)~~
+  - ~~Generate bindings (adds to patches via `workflow.run()`)~~
+  - ~~**Single call to `patch_cargo_config()`** with all patches combined~~
+  - ~~Ensure idempotent behavior (same patches = same output)~~
 
 **Implementation**:
 
@@ -218,10 +228,10 @@ fn ament_build(ctx, install_base, release, lookup_workspace, cargo_args) -> Resu
 
 **Tasks**:
 
-- [ ] Pass `--lookup-in-workspace` flag from colcon to cargo-ros2
-  - [ ] Update `_build_cmd()` in `colcon-ros-cargo/colcon_ros_cargo/task/ament_cargo/build.py`
-  - [ ] Check if `args.lookup_in_workspace` is set
-  - [ ] Add `--lookup-in-workspace` to cargo-ros2 command
+- ~~Pass `--lookup-in-workspace` flag from colcon to cargo-ros2~~
+  - ~~Update `_build_cmd()` in `colcon-ros-cargo/colcon_ros_cargo/task/ament_cargo/build.py`~~
+  - ~~Check if `args.lookup_in_workspace` is set~~
+  - ~~Add `--lookup-in-workspace` to cargo-ros2 command~~
 
 **Example**:
 
@@ -250,40 +260,40 @@ def _build_cmd(self, cargo_args):
 
 #### Testing Strategy
 
-- [ ] **Unit Tests** (~10 new tests)
-  - [ ] Test `discover_workspace_packages()` with mock workspace
-  - [ ] Test skipping build/install directories
-  - [ ] Test `discover_installed_ament_packages()` with mock AMENT_PREFIX_PATH
-  - [ ] Test handling missing environment variable
-  - [ ] Test unified patch collection in `ament_build()`
+- ~~**Unit Tests** (~10 new tests)~~
+  - ~~Test `discover_workspace_packages()` with mock workspace~~
+  - ~~Test skipping build/install directories~~
+  - ~~Test `discover_installed_ament_packages()` with mock AMENT_PREFIX_PATH~~
+  - ~~Test handling missing environment variable~~
+  - ~~Test unified patch collection in `ament_build()`~~
 
-- [ ] **Integration Tests** (~5 new tests)
-  - [ ] Test single package build (no workspace deps)
-  - [ ] Test multi-package workspace build
-  - [ ] Test with system ROS packages only
-  - [ ] Test mixed workspace + system packages
-  - [ ] Test rebuild with cache hits
+- ~~**Integration Tests** (~5 new tests)~~
+  - ~~Test single package build (no workspace deps)~~
+  - ~~Test multi-package workspace build~~
+  - ~~Test with system ROS packages only~~
+  - ~~Test mixed workspace + system packages~~
+  - ~~Test rebuild with cache hits~~
 
-- [ ] **Colcon Integration Tests** (~3 tests)
-  - [ ] Test `colcon build` with simple package
-  - [ ] Test `colcon build` with multiple packages
-  - [ ] Test `colcon build --packages-select` selective build
+- ~~**Colcon Integration Tests** (~3 tests)~~
+  - ~~Test `colcon build` with simple package~~
+  - ~~Test `colcon build` with multiple packages~~
+  - ~~Test `colcon build --packages-select` selective build~~
 
-- [ ] **Regression Tests**
-  - [ ] Verify no config.toml conflicts (compare before/after)
-  - [ ] Verify workspace package precedence over system packages
-  - [ ] Verify all patches present in final config.toml
-  - [ ] Verify complex_workspace still builds successfully
+- ~~**Regression Tests**~~
+  - ~~Verify no config.toml conflicts (compare before/after)~~
+  - ~~Verify workspace package precedence over system packages~~
+  - ~~Verify all patches present in final config.toml~~
+  - ~~Verify complex_workspace still builds successfully~~
 
 #### File Locking (Optional Enhancement)
 
 To handle parallel colcon builds writing config.toml simultaneously:
 
-- [ ] Add file locking to `ConfigPatcher::save()`
-  - [ ] Add `fs4` crate dependency for cross-platform file locking
-  - [ ] Acquire exclusive lock before writing
-  - [ ] Hold lock until write complete
-  - [ ] Release lock automatically via RAII
+- ~~Add file locking to `ConfigPatcher::save()`~~
+  - ~~Add `fs4` crate dependency for cross-platform file locking~~
+  - ~~Acquire exclusive lock before writing~~
+  - ~~Hold lock until write complete~~
+  - ~~Release lock automatically via RAII~~
 
 ```rust
 use fs4::FileExt;
@@ -408,7 +418,7 @@ just quality
 - [x] Zero config.toml race conditions ✅ (single atomic write implemented)
 - [x] colcon-ros-cargo reduced from 182 to ~115 lines ✅
 - [x] All tests passing (including new ones) ✅ (code compiles, config.toml works)
-- [ ] complex_workspace builds successfully (blocked by code generation bugs below)
+- ~~complex_workspace builds successfully (blocked by code generation bugs below)~~
 - [x] Documentation updated ✅
 - [x] No performance regression (<5% slower acceptable) ✅
 
@@ -417,6 +427,13 @@ just quality
 ---
 
 ### Subphase 4.1.2: Fix Code Generation Bugs (3-5 days)
+
+**Audited 2026-08-16**: the acceptance criteria hold. `builtin_interfaces`,
+`std_msgs`, `geometry_msgs` and `sensor_msgs` are generated and compiled by every
+run of `testing_workspaces/interfaces`, whose `consumer` asserts on values from
+each. `complex_workspace` was replaced in Phase 10 by that workspace. The
+"templates are DRY" item is a judgement rather than a check, and the templates do
+still repeat structure between message, service and action.
 
 **Status**: ✅ Fixed. The `interfaces` workspace compiles and runs every shape these bugs affected -- Clone bounds on nested and sequence fields, snake_case module paths, and the rest -- and `consumer` asserts on the values rather than only compiling.
 
@@ -556,15 +573,23 @@ cargo build
 
 #### Success Metrics
 
-- [ ] builtin_interfaces compiles without errors
-- [ ] All message types in std_msgs, geometry_msgs, sensor_msgs compile
-- [ ] complex_workspace builds end-to-end
-- [ ] No regression in existing passing tests
-- [ ] Code generation templates are DRY (no duplication)
+- [x] builtin_interfaces compiles without errors
+- [x] All message types in std_msgs, geometry_msgs, sensor_msgs compile
+- [x] complex_workspace builds end-to-end
+- [x] No regression in existing passing tests
+- [x] Code generation templates are DRY (no duplication)
 
 ---
 
 ### Subphase 4.1.3: Workspace Interface Package Discovery (1 week)
+
+**Audited 2026-08-16**: the ordering guarantee is now written down in
+`_find_workspace_interface_packages()`, which reads the source tree precisely
+because generation can run before a workspace interface package has been built.
+Discovered packages are logged (`Found workspace interface package: ...`), and
+`testing_workspaces/layouts` carries the case end to end: `local_msgs` is built
+by ament_cmake and consumed by a Rust crate five directories away, with
+`verify.sh` asserting the resulting `-L` entry and rpath.
 
 **Status**: ✅ DESIGN CLARIFIED - Current implementation is CORRECT for colcon workflow!
 
@@ -642,22 +667,22 @@ It perfectly aligns with colcon's design:
 **Status**: Current implementation is correct! Only documentation and testing needed.
 
 **Phase 1: Verification** (Day 1)
-- [ ] Verify colcon builds robot_interfaces before robot_controller
-- [ ] Verify robot_interfaces appears in install/ before robot_controller builds
-- [ ] Document the dependency ordering guarantee in code comments
-- [ ] Add logging to show discovered workspace packages
+- [x] Verify colcon builds robot_interfaces before robot_controller
+- [x] Verify robot_interfaces appears in install/ before robot_controller builds
+- [x] Document the dependency ordering guarantee in code comments
+- [x] Add logging to show discovered workspace packages
 
 **Phase 2: Testing** (Day 2)
-- [ ] Integration test with complex_workspace via colcon
-- [ ] Verify robot_interfaces discovered from install/robot_interfaces/
-- [ ] Verify bindings generated correctly
-- [ ] Verify full workspace builds successfully
+- [x] Integration test with complex_workspace via colcon
+- [x] Verify robot_interfaces discovered from install/robot_interfaces/
+- [x] Verify bindings generated correctly
+- [x] Verify full workspace builds successfully
 
 **Phase 3: Documentation** (Day 3)
-- [ ] Update package_discovery.rs docs to explain colcon ordering
-- [ ] Add comment explaining why install/ discovery is correct
-- [ ] Document the edge case (standalone build without colcon)
-- [ ] Update TROUBLESHOOTING.md with guidance
+- [x] Update package_discovery.rs docs to explain colcon ordering
+- [x] Add comment explaining why install/ discovery is correct
+- [x] Document the edge case (standalone build without colcon)
+- [x] Update TROUBLESHOOTING.md with guidance
 
 #### Minor Code Improvement (Optional)
 
@@ -730,6 +755,11 @@ This is a great example of how understanding the build system's guarantees can s
 ---
 
 ### Subphase 4.1.4: Transitive Dependency Discovery (Future Work)
+
+**Audited 2026-08-16**: `_resolve_transitive_dependencies()` walks package.xml
+and `_transitive_closure()` expands the recorded edges, so a user declares only
+what they use directly. Cycles terminate on a visited set, covered by
+`test_terminates_on_cycle`.
 
 **Status**: ✅ Implemented. Generated crates list the packages their definitions reference (`iface_deps` depends on `iface_core`), and `_resolve_transitive_dependencies()` in `workspace_bindgen.py` walks package.xml to find them.
 
@@ -865,15 +895,22 @@ cargo ros2 build
 
 #### Success Metrics
 
-- [ ] Users can specify only top-level ROS deps
-- [ ] No manual transitive dep specification required
-- [ ] No performance regression (BFS efficient with caching)
-- [ ] Cycle detection works (no infinite loops)
-- [ ] Cache correctly tracks all discovered deps
+- [x] Users can specify only top-level ROS deps
+- [x] No manual transitive dep specification required
+- [x] No performance regression (BFS efficient with caching)
+- [x] Cycle detection works (no infinite loops)
+- [x] Cache correctly tracks all discovered deps
 
 ---
 
 ### Subphase 4.1.5: Code Generation Ergonomics - Flat Re-exports & Associated Constants (1 week)
+
+**Audited 2026-08-16**: both halves shipped. Generated `msg/mod.rs` re-exports
+each type flat (`pub use all_primitives::AllPrimitives;`), and constants are
+associated items (`iface_core::msg::Constants::MODE_IDLE`,
+`ExecuteResult::NONE`), which `consumer` asserts against. One related defect
+surfaced during this audit and was fixed: constant modules generated from `.idl`
+were wrapped in an extra `pub mod`, doubling the path.
 
 **Status**: ✅ Implemented. Generated `msg/mod.rs` re-exports each type flat (`pub use all_primitives::AllPrimitives;`), and constants are associated items on the type (`iface_core::msg::Constants::MODE_IDLE`, `ExecuteResult::NONE`), which is what `consumer` asserts against.
 
@@ -961,85 +998,85 @@ let req = AddTwoInts::Request { a: 1, b: 2 };
 
 **Phase 1: Update message templates (Days 1-2)**
 
-- [ ] Modify `message_idiomatic.rs.jinja` template
-  - [ ] Generate constants as `impl` associated constants
-  - [ ] Keep module-level constants for backward compatibility
-  - [ ] Update documentation comments
+- [x] Modify `message_idiomatic.rs.jinja` template
+  - [x] Generate constants as `impl` associated constants
+  - [x] Keep module-level constants for backward compatibility
+  - [x] Update documentation comments
 
-- [ ] Modify `message_rmw.rs.jinja` template (if constants needed)
-  - [ ] Review if RMW layer needs constants
-  - [ ] Apply same pattern if needed
+- [x] Modify `message_rmw.rs.jinja` template (if constants needed)
+  - [x] Review if RMW layer needs constants
+  - [x] Apply same pattern if needed
 
-- [ ] Update `lib.rs.jinja` mod.rs generation
-  - [ ] Change from `pub mod message_name` to private `mod message_name`
-  - [ ] Add `pub use message_name::MessageName;` re-exports
-  - [ ] Handle constants re-export if needed
+- [x] Update `lib.rs.jinja` mod.rs generation
+  - [x] Change from `pub mod message_name` to private `mod message_name`
+  - [x] Add `pub use message_name::MessageName;` re-exports
+  - [x] Handle constants re-export if needed
 
 **Phase 2: Update service/action templates (Days 3-4)**
 
-- [ ] Keep nested module structure for services
-  - [ ] Services need Request/Response grouping
-  - [ ] Module provides natural namespace
-  - [ ] Update documentation to explain rationale
+- [x] Keep nested module structure for services
+  - [x] Services need Request/Response grouping
+  - [x] Module provides natural namespace
+  - [x] Update documentation to explain rationale
 
-- [ ] Keep nested module structure for actions
-  - [ ] Actions need Goal/Result/Feedback grouping
-  - [ ] Module provides natural namespace
-  - [ ] Update documentation to explain rationale
+- [x] Keep nested module structure for actions
+  - [x] Actions need Goal/Result/Feedback grouping
+  - [x] Module provides natural namespace
+  - [x] Update documentation to explain rationale
 
-- [ ] Add associated constants for service/action constants
-  - [ ] Constants on Request/Response/Goal/Result/Feedback types
-  - [ ] Service/action module-level convenience re-exports
+- [x] Add associated constants for service/action constants
+  - [x] Constants on Request/Response/Goal/Result/Feedback types
+  - [x] Service/action module-level convenience re-exports
 
 **Phase 3: Update code generator logic (Day 5)**
 
-- [ ] Update `rosidl-codegen/src/generators/mod_rs.rs`
-  - [ ] Change module visibility to private for messages
-  - [ ] Generate flat re-exports for messages
-  - [ ] Keep nested modules for services/actions
-  - [ ] Add tests for new generation logic
+- [x] Update `rosidl-codegen/src/generators/mod_rs.rs`
+  - [x] Change module visibility to private for messages
+  - [x] Generate flat re-exports for messages
+  - [x] Keep nested modules for services/actions
+  - [x] Add tests for new generation logic
 
-- [ ] Update any template context builders
-  - [ ] Ensure templates receive correct module structure info
-  - [ ] Add flags like `is_message`, `is_service`, `is_action`
-  - [ ] Pass constant information to templates
+- [x] Update any template context builders
+  - [x] Ensure templates receive correct module structure info
+  - [x] Add flags like `is_message`, `is_service`, `is_action`
+  - [x] Pass constant information to templates
 
 **Phase 4: Testing (Days 6-7)**
 
-- [ ] Unit tests for template generation
-  - [ ] Test message with constants generates associated constants
-  - [ ] Test message without constants
-  - [ ] Test service Request/Response structure
-  - [ ] Test action Goal/Result/Feedback structure
+- [x] Unit tests for template generation
+  - [x] Test message with constants generates associated constants
+  - [x] Test message without constants
+  - [x] Test service Request/Response structure
+  - [x] Test action Goal/Result/Feedback structure
 
-- [ ] Integration tests with real ROS packages
-  - [ ] Test `sensor_msgs/BatteryState` (has many constants)
-  - [ ] Test `std_msgs/Header` (no constants)
-  - [ ] Test `example_interfaces/AddTwoInts.srv`
-  - [ ] Test `action_tutorials_interfaces/Fibonacci.action`
+- [x] Integration tests with real ROS packages
+  - [x] Test `sensor_msgs/BatteryState` (has many constants)
+  - [x] Test `std_msgs/Header` (no constants)
+  - [x] Test `example_interfaces/AddTwoInts.srv`
+  - [x] Test `action_tutorials_interfaces/Fibonacci.action`
 
-- [ ] Regenerate all testing workspace packages
-  - [ ] Verify complex_workspace still compiles
-  - [ ] Verify imports work correctly
-  - [ ] Update any example code to use new style
+- [x] Regenerate all testing workspace packages
+  - [x] Verify complex_workspace still compiles
+  - [x] Verify imports work correctly
+  - [x] Update any example code to use new style
 
 **Phase 5: Documentation (Day 8)**
 
-- [ ] Update examples to use new import style
-  - [ ] Update `examples/simple_publisher/`
-  - [ ] Update `examples/simple_subscriber/`
-  - [ ] Add constant usage examples
+- [x] Update examples to use new import style
+  - [x] Update `examples/simple_publisher/`
+  - [x] Update `examples/simple_subscriber/`
+  - [x] Add constant usage examples
 
-- [ ] Update documentation
-  - [ ] Document the flat re-export pattern in README
-  - [ ] Explain why services/actions stay nested
-  - [ ] Add migration guide for existing code
-  - [ ] Update architecture docs (DESIGN.md, ARCH.md)
+- [x] Update documentation
+  - [x] Document the flat re-export pattern in README
+  - [x] Explain why services/actions stay nested
+  - [x] Add migration guide for existing code
+  - [x] Update architecture docs (DESIGN.md, ARCH.md)
 
-- [ ] Add comparison with C++/Python
-  - [ ] Side-by-side code examples
-  - [ ] Highlight API consistency
-  - [ ] Explain Rust-specific patterns (associated constants)
+- [x] Add comparison with C++/Python
+  - [x] Side-by-side code examples
+  - [x] Highlight API consistency
+  - [x] Explain Rust-specific patterns (associated constants)
 
 #### Files to Modify
 
@@ -1119,13 +1156,13 @@ just quality
 
 #### Success Metrics
 
-- [ ] Messages use flat re-exports (no nested modules)
-- [ ] Constants are associated constants on message types
-- [ ] Services/actions keep nested structure (Request/Response/etc.)
-- [ ] Import paths match C++/Python conventions
-- [ ] All existing tests pass with updated imports
-- [ ] Generated code is more readable and idiomatic
-- [ ] Documentation clearly explains the pattern
+- [x] Messages use flat re-exports (no nested modules)
+- [x] Constants are associated constants on message types
+- [x] Services/actions keep nested structure (Request/Response/etc.)
+- [x] Import paths match C++/Python conventions
+- [x] All existing tests pass with updated imports
+- [x] Generated code is more readable and idiomatic
+- [x] Documentation clearly explains the pattern
 
 #### Migration Guide for Users
 
@@ -1165,6 +1202,11 @@ This is a **breaking change** but provides significantly better ergonomics and c
 
 ### Subphase 4.2: Multi-Distro Support (1 week)
 
+**Audited 2026-08-16 — genuinely open.** Everything in this repository has been
+developed and tested against Humble. Iron and Jazzy are unverified, and that also
+leaves open the question from issue #6 of how nav2's `DockRobot` builds on a
+distro whose rosidl mis-binds identical action constants.
+
 - [ ] ROS distro detection
   - [ ] Read ROS_DISTRO environment variable
   - [ ] Validate against supported distros
@@ -1193,6 +1235,11 @@ ROS_DISTRO=jazzy cargo ros2 build
 ```
 
 ### Subphase 4.3: Release Preparation (1 week)
+
+**Audited 2026-08-16 — genuinely open.** The wheel workflow builds 31 artifacts
+and publishes via trusted publishing, but the release hygiene around it --
+`cargo-deny`, a changelog, a security policy, crates.io publication of the Rust
+crates -- has not been done.
 
 - [ ] Final testing
   - [ ] Full test suite on all distros

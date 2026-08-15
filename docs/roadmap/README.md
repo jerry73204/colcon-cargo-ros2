@@ -35,9 +35,21 @@
 
 ## Current Status
 
-**Audited 2026-08-16.** The per-phase checklists in `docs/phases/` were written as
-plans and were not kept ticked as work landed; where they conflict with a Status
-line, the Status line and the tests win.
+**Audited 2026-08-16.** The per-phase checklists in `docs/phases/` were written
+as plans and were not kept ticked as work landed. They have since been audited
+item by item against the code and its tests: 341 open boxes became 66. Of the
+275 resolved, 204 were verified done and 71 -- the whole of Subphase 4.1.1 --
+were struck through as superseded, because they describe an architecture built
+around `colcon-ros-cargo` that was never adopted.
+
+What remains open is real: documentation and benchmarking for IDL support (12),
+deferred performance and polish work in Phase 3 (15), and Phase 4's multi-distro
+support and release preparation (39).
+
+The audit also found two defects, both fixed: nothing exercised the `.idl` code
+path end to end, and constant modules generated from `.idl` were wrapped in an
+extra `pub mod`, so the only reachable path was
+`msg::x_constants::x_constants::CONST`.
 
 ### Complete ✅
 

@@ -935,7 +935,7 @@ GitHub Actions workflows:
 - autoware_carla_bridge (118 packages) ✅
 - cuda_ndt_matcher (16 Autoware + standard packages) ✅
 
-**Known open**: only Humble has been tested; Debian packaging (`stdeb.cfg`) is inert since `setup.py` was removed.
+**Known open**: only Humble has been tested; Debian packaging (`stdeb.cfg`) is inert since `setup.py` was removed. The phase checklists were audited on 2026-08-16 — 66 boxes remain open, all of them IDL documentation, deferred Phase 3 polish, or Phase 4's multi-distro and release work.
 
 **Versions**:
 - Rust workspace: v0.2.0 (rosidl-parser, rosidl-codegen, rosidl-bindgen, cargo-ros2), edition 2024

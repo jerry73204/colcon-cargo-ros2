@@ -7,7 +7,7 @@
 
 use crate::types::{
     annotation_value_to_constant_value, escape_keyword, idl_constant_value_to_rust,
-    idl_primitive_to_primitive, rust_type_for_idl, rust_type_for_idl_constant, to_snake_case,
+    idl_primitive_to_primitive, rust_type_for_idl, rust_type_for_idl_constant,
 };
 use rosidl_parser::ast::{FieldType, Message};
 use rosidl_parser::idl::ast::{
@@ -90,23 +90,24 @@ fn generate_module_code(
 fn generate_constant_module(const_mod: &ConstantModule) -> Result<String, String> {
     let mut code = String::new();
 
-    // Module doc comment
-    code.push_str(&format!("/// Constants for {}\n", const_mod.name));
-    code.push_str(&format!("pub mod {} {{\n", to_snake_case(&const_mod.name)));
+    // The file is declared as a module by the msg/srv/action module file
+    // (`#[path = "..."] pub mod my_message_constants;`), so the constants go at
+    // the top level here. Wrapping them in another `pub mod` -- which this did
+    // until an audit in 2026-08 -- made the only reachable path
+    // `msg::my_message_constants::my_message_constants::MAX_VALUE`.
+    code.push_str(&format!("//! Constants for {}\n\n", const_mod.name));
 
-    // Generate constants
     for constant in &const_mod.constants {
         let const_name = constant.name.to_uppercase();
         let const_type = rust_type_for_idl_constant(&constant.const_type);
         let const_value = idl_constant_value_to_rust(&constant.value);
 
         code.push_str(&format!(
-            "    pub const {}: {} = {};\n",
+            "pub const {}: {} = {};\n",
             const_name, const_type, const_value
         ));
     }
 
-    code.push_str("}\n");
     Ok(code)
 }
 
@@ -380,8 +381,13 @@ mod tests {
         });
 
         let code = generate_constant_module(&const_mod).unwrap();
-        assert!(code.contains("pub mod my_message_constants"));
         assert!(code.contains("pub const MAX_VALUE: i16 = 42;"));
+        // No inner `pub mod`: the module file already declares this file as one,
+        // and wrapping again doubled the path users had to write.
+        assert!(
+            !code.contains("pub mod"),
+            "constants must sit at the top level of their file:\n{code}"
+        );
     }
 
     #[test]

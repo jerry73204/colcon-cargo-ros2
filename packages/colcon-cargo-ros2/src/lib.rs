@@ -2,15 +2,14 @@
 //!
 //! This module exposes cargo-ros2's functionality to Python using PyO3.
 
-#![allow(clippy::useless_conversion)] // False positive with PyO3 0.22
-#![allow(unsafe_op_in_unsafe_fn)] // PyO3 0.22 macros generate unsafe calls inside unsafe fns
+#![allow(clippy::useless_conversion)] // False positive with the PyO3 macros
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use std::path::PathBuf;
 
 /// Python wrapper for BindgenConfig
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 struct BindgenConfig {
     #[pyo3(get, set)]
@@ -58,7 +57,7 @@ impl BindgenConfig {
 }
 
 /// Python wrapper for InstallConfig
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 struct InstallConfig {
     #[pyo3(get, set)]

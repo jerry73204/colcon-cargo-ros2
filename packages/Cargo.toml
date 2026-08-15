@@ -31,8 +31,8 @@ pyo3 = { version = "0.22", features = ["extension-module"] }
 # Workspace member dependencies
 cargo-ros2 = { path = "cargo-ros2" }
 rosidl-bindgen = { path = "rosidl-bindgen" }
-rosidl-parser = { path = "rosidl-parser" }
-rosidl-codegen = { path = "rosidl-codegen" }
+rosidl-parser = { path = "rosidl-parser", version = "0.2.0" }
+rosidl-codegen = { path = "rosidl-codegen", version = "0.2.0" }
 
 [profile.dev-release]
 inherits = "release"

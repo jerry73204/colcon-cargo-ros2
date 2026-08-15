@@ -249,6 +249,18 @@ clean-workspaces:
              --working-directory "testing_workspaces/$ws" clean
     done
 
+# === SUPPLY CHAIN ===
+
+# Check advisories, licences, bans and sources (policy in packages/deny.toml)
+audit:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    if ! command -v cargo-deny >/dev/null 2>&1; then
+        echo "cargo-deny not installed: cargo install cargo-deny --locked" >&2
+        exit 1
+    fi
+    cd packages && cargo deny check
+
 # === QUALITY COMMANDS ===
 
 # Run all quality checks (format, lint, test)

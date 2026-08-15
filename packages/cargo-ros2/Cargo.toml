@@ -23,9 +23,9 @@ serde_json = "1.0"
 cargo_metadata = "0.18"
 toml = "0.8"
 sha2 = "0.10"
-rosidl-bindgen = { path = "../rosidl-bindgen" }
+rosidl-bindgen = { path = "../rosidl-bindgen", version = "0.2.0" }
 rayon = "1.10"
-indicatif = "0.17"
+indicatif = "0.18"
 
 [dev-dependencies]
 tempfile = "3.8"

@@ -12,5 +12,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # PyO3 bindings to expose cargo-ros2 functionality to Python
-pyo3 = { version = "0.22", features = ["extension-module"] }
-cargo-ros2 = { path = "../cargo-ros2" }
+pyo3 = { version = "0.29", features = ["extension-module"] }
+cargo-ros2 = { path = "../cargo-ros2", version = "0.2.0" }

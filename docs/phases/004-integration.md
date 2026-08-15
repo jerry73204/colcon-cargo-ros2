@@ -1236,34 +1236,48 @@ ROS_DISTRO=jazzy cargo ros2 build
 
 ### Subphase 4.3: Release Preparation (1 week)
 
-**Audited 2026-08-16 — genuinely open.** The wheel workflow builds 31 artifacts
-and publishes via trusted publishing, but the release hygiene around it --
-`cargo-deny`, a changelog, a security policy, crates.io publication of the Rust
-crates -- has not been done.
+**Worked 2026-08-16.** The preparation is done; the publishing is not, and is
+not something to do without a person deciding to.
+
+Done: supply-chain policy (`packages/deny.toml`) with all four checks passing and
+wired into CI; the advisories it found fixed rather than waived (pyo3 0.22 → 0.29
+for two vulnerabilities, indicatif 0.17 → 0.18 to drop an unmaintained crate,
+crossbeam-epoch bumped); `SECURITY.md`; `CHANGELOG.md`; a documentation review
+that found the CLI reference describing five commands that never existed.
+
+Also fixed while checking publishability: the internal crates carried path
+dependencies with no version, which `cargo publish` would have rejected.
+
+Left for a human, deliberately: publishing to crates.io and PyPI, tagging, the
+GitHub release and the announcement. Pushing a `v*` tag triggers the wheel
+workflow, which publishes — that is a decision, not a chore.
+
+Still blocked on Phase 4.2: "full test suite on all distros". Benchmarks and
+memory profiling remain unstarted.
 
 - [ ] Final testing
-  - [ ] Full test suite on all distros
-  - [ ] Real-world project testing
+  - [ ] Full test suite on all distros — blocked on Phase 4.2; only Humble is available here
+  - [ ] Real-world project testing — reported against autoware_carla_bridge and cuda_ndt_matcher, but not reproducible from this repository
   - [ ] Performance benchmarks
   - [ ] Memory profiling
 
-- [ ] Security audit
-  - [ ] Run cargo-deny
-  - [ ] Check dependencies for vulnerabilities
-  - [ ] Review unsafe code (if any)
-  - [ ] Add security policy
+- [x] Security audit
+  - [x] Run cargo-deny — policy in `packages/deny.toml`, run by `just audit` and by the `supply-chain` CI job on every pull request
+  - [x] Check dependencies for vulnerabilities — four findings, all cleared: two pyo3 advisories (0.22 → 0.29), an unmaintained `number_prefix` (indicatif 0.17 → 0.18) and a crossbeam-epoch pointer dereference
+  - [x] Review unsafe code — one `unsafe` block in the whole workspace, in a test that removes an environment variable; documented in SECURITY.md along with the FFI in generated crates
+  - [x] Add security policy — `SECURITY.md`
 
-- [ ] Documentation review
-  - [ ] Proofread all docs
-  - [ ] Verify examples work
-  - [ ] Create changelog
+- [x] Documentation review
+  - [x] Proofread all docs — the user-facing set (README, troubleshooting, CLI reference, SECURITY, CHANGELOG); the phase docs are historical and carry a note saying so
+  - [x] Verify examples work — this turned up `docs/cli-reference.md` and `docs/troubleshooting.md` documenting `cargo ros2 build`, `check`, `info`, `cache` and `ament-build`, none of which exist. The reference was rewritten against `--help` and the troubleshooting commands replaced
+  - [x] Create changelog — `CHANGELOG.md`, Keep a Changelog format
 
 - [ ] Release process
-  - [ ] Publish rosidl-runtime-rs to crates.io
+  - [ ] Publish rosidl-runtime-rs to crates.io — needs a person; the crates are publishable now that internal path dependencies carry versions
   - [ ] Publish cargo-ros2-bindgen to crates.io
   - [ ] Publish cargo-ros2 to crates.io
   - [ ] Create GitHub release v0.1.0
-  - [ ] Tag release commit
+  - [ ] Tag release commit — pushing a `v*` tag triggers the wheel workflow, which publishes to PyPI
   - [ ] Generate release notes
 
 - [ ] Community announcement

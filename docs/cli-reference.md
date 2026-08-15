@@ -1,643 +1,124 @@
-# cargo-ros2 CLI Reference
+# CLI Reference
 
-Complete command-line reference for cargo-ros2 and cargo-ros2-bindgen tools.
+Normal use needs none of these commands: `colcon build` runs everything. They
+exist for generating bindings outside a colcon workspace, inspecting what a build
+would produce, and diagnosing one that misbehaved.
 
-## Table of Contents
+> **Rewritten 2026-08-16.** The previous version of this document described
+> `cargo ros2 build`, `check`, `info`, `cache` and `ament-build` — a command set
+> that was planned and never built. Everything below was checked against
+> `--help`.
 
-- [cargo ros2](#cargo-ros2) - Main build tool
-  - [build](#cargo-ros2-build) - Build with bindings
-  - [check](#cargo-ros2-check) - Check project
-  - [clean](#cargo-ros2-clean) - Clean artifacts
-  - [ament-build](#cargo-ros2-ament-build) - Install to ament
-  - [cache](#cargo-ros2-cache) - Cache management
-  - [info](#cargo-ros2-info) - Package information
-- [cargo-ros2-bindgen](#cargo-ros2-bindgen) - Binding generator
+## Two ways in
 
----
+| | Comes from | Subcommands |
+|---|---|---|
+| `colcon-cargo-ros2` | the wheel, on `PATH` after `pip install` | `bindgen`, `install`, `clean`, `doctor` |
+| `cargo ros2` | a source checkout (`cargo install --path packages/cargo-ros2`) | the same four |
 
-## cargo ros2
+`colcon-cargo-ros2-doctor` is a direct alias for `colcon-cargo-ros2 doctor`,
+under its own name because it is what gets typed while a build is failing.
 
-Main build tool for ROS 2 Rust projects. Orchestrates binding generation, caching, and compilation.
-
-### Synopsis
-
-```bash
-cargo ros2 <COMMAND> [OPTIONS]
-```
-
-### Global Options
-
-| Option | Description |
-|--------|-------------|
-| `-v, --verbose` | Enable verbose output for debugging |
-| `-h, --help` | Print help information |
-| `-V, --version` | Print version information |
+The wheel ships the PyO3 extension module and no binaries, which is why the
+console scripts exist; see [issue #4](https://github.com/jerry73204/colcon-cargo-ros2/issues/4).
 
 ---
 
-## cargo ros2 build
+## `bindgen`
 
-Build the project with automatic ROS 2 binding generation.
-
-### Synopsis
+Generate Rust bindings for one ROS interface package. `colcon build` does this
+for every dependency it discovers; this is for doing one on its own.
 
 ```bash
-cargo ros2 build [OPTIONS]
+colcon-cargo-ros2 bindgen --package std_msgs --output build/bindings
 ```
 
-### Options
+| Option | Meaning |
+|---|---|
+| `--package <name>` | ROS package name (required) |
+| `--output <dir>` | directory to generate into (required) |
+| `--package-path <dir>` | the package's share directory; default is to ask the ament index |
+| `--rosidl-runtime-rs-version <ver>` | version the generated crate depends on. It has to match what your `rclrs` pulls in — `colcon build` derives this from the workspace |
+| `--verbose` | |
 
-| Option | Description |
-|--------|-------------|
-| `--bindings-only` | Generate bindings without running cargo build |
+## `install`
 
-### Description
-
-The `build` command performs a complete workflow:
-
-1. **Discover ROS dependencies** from Cargo.toml
-2. **Check cache** for each package (SHA256-based)
-3. **Generate missing bindings** to `target/ros2_bindings/`
-4. **Create configs** (`.cargo/config.toml` per Cargo workspace/crate) with patches and rustflags
-5. **Invoke cargo build** (config picked up automatically from `.cargo/config.toml`; unless `--bindings-only`)
-
-### Examples
+Copy binaries, libraries and `[package.metadata.ros]` entries into
+`install/<pkg>/` and write the ament markers, as the build task does after
+`cargo build`.
 
 ```bash
-# Standard build
-cargo ros2 build
-
-# Generate bindings without building
-cargo ros2 build --bindings-only
-
-# Verbose output
-cargo ros2 build --verbose
+colcon-cargo-ros2 install --install-base install/my_node --profile release
 ```
 
-### How It Works
+| Option | Meaning |
+|---|---|
+| `--install-base <dir>` | `install/<package>` directory (required) |
+| `--project-root <dir>` | crate directory; default is the current directory |
+| `--build-base <dir>` | colcon build directory; default is the project root |
+| `--profile <name>` | cargo profile the build used (default `debug`) |
+| `--target <triple>` | for a cross build |
+| `--features <list>` | comma-separated features that were enabled |
+| `--no-default-features`, `--all-features` | |
+| `--verbose` | |
 
-**Discovery**: Parses Cargo.toml dependencies and cross-references with packages in ament index (via `AMENT_PREFIX_PATH`).
+## `clean`
 
-**Caching**: Each package has a SHA256 checksum calculated from its interface files (.msg, .srv, .action). Bindings are regenerated only if:
-- Package not in cache
-- Checksum changed (source files modified)
-- Output directory missing
-
-**Parallel Generation**: When multiple packages need generation, they're processed in parallel using rayon for significant performance gains (3-5x speedup).
-
-**Config Generation**: Creates `.cargo/config.toml` in each Cargo workspace/crate with `[patch.crates-io]` entries and `[build] rustflags` for linker search paths.
-
-### Performance
-
-- **Cold build**: First-time generation for all dependencies (~10-15s per package)
-- **Hot build**: Cache hit, no regeneration (<5s for most projects)
-- **Parallel speedup**: 3-5x faster when 3+ packages need generation
-
----
-
-## cargo ros2 check
-
-Check the project without building binaries.
-
-### Synopsis
+Remove the generated bindings and cache for a crate.
 
 ```bash
-cargo ros2 check [OPTIONS]
+colcon-cargo-ros2 clean --path .
 ```
 
-### Options
+## `doctor`
 
-| Option | Description |
-|--------|-------------|
-| `--bindings-only` | Generate bindings without running cargo check |
-
-### Description
-
-Similar to `cargo ros2 build` but runs `cargo check` instead of `cargo build`. Faster for type-checking without producing binaries.
-
-### Examples
+Explain why a plain `cargo` invocation fails in this workspace. Walks the chain
+in order and prints the fix for the first thing that is wrong; exits non-zero if
+anything failed, so CI can gate on it.
 
 ```bash
-# Check project
-cargo ros2 check
+colcon-cargo-ros2-doctor          # or: colcon-cargo-ros2 doctor [path]
+```
 
-# Check with verbose output
-cargo ros2 check --verbose
+```
+✓ ROS environment: 1 prefixes on AMENT_PREFIX_PATH
+✓ Generated .cargo/config.toml: found at /ws/src/pkg_b/.cargo/config.toml
+✓ Patch section: generated markers present
+✓ Patched crates: 4 generated crates readable
+✓ Binding freshness: 4 crates match their interface definitions
+✗ package.xml declarations: used in Cargo.toml but not declared: sensor_msgs
+    Add to package.xml, then re-run `colcon build`:
+      <depend>sensor_msgs</depend>
 ```
 
 ---
 
-## cargo ros2 clean
+## Options on `colcon build`
 
-Clean generated bindings and cache.
+Added by this extension to the `build` and `test` verbs.
 
-### Synopsis
-
-```bash
-cargo ros2 clean
-```
-
-### Description
-
-Removes:
-- `target/ros2_bindings/` - Generated binding packages
-- `.ros2_bindgen_cache` - Cache metadata file
-
-**Note**: Does not modify `.cargo/config.toml` patches. Use `cargo ros2 cache clean` for that.
-
-### Examples
+| Option | Meaning |
+|---|---|
+| `--cargo-args <args...>` | passed through to cargo. Arguments that look like colcon options need a leading space: `--cargo-args " --help"` |
+| `--rosidl-runtime-rs-version <ver>` | override the version generated crates depend on. Default is derived from what the workspace's packages declare |
+| `--no-rpath` | do not bake library directories into binaries. They then need a sourced environment to run |
+| `--no-gitignore` | do not add the generated `.cargo/config.toml` to `.gitignore` |
 
 ```bash
-# Clean all bindings and cache
-cargo ros2 clean
+colcon build --cargo-args --release
+colcon build --cargo-args --features extra
+colcon build --rosidl-runtime-rs-version 0.5
 ```
 
----
+## Environment variables
 
-## cargo ros2 ament-build
+| Variable | Effect |
+|---|---|
+| `COLCON_CARGO_ROS2_SKIP_STAMP_CHECK=1` | build against bindings whose interface definitions have changed, instead of failing. For bisecting; the normal fix is `colcon build` |
+| `AMENT_PREFIX_PATH` | where interface packages are discovered. A generated `.cargo/config.toml` supplies it to build scripts, so a sourced environment is not required |
+| `CARGO_TARGET_DIR` | overrides the `target-dir` the generated config sets |
 
-Build and install package to ament index layout (colcon-compatible).
+## See also
 
-### Synopsis
-
-```bash
-cargo ros2 ament-build --install-base <PATH> [OPTIONS]
-```
-
-### Options
-
-| Option | Description |
-|--------|-------------|
-| `--install-base <PATH>` | **Required.** Installation base directory |
-| `--release` | Build with release profile (optimized) |
-
-### Description
-
-Performs a complete three-phase build and installation:
-
-**Phase 1: Generate Bindings**
-- Discovers ROS dependencies
-- Generates bindings (same as `cargo ros2 build --bindings-only`)
-
-**Phase 2: Build Package**
-- Runs `cargo build` (or `cargo build --release`)
-- Compiles all binaries and libraries
-
-**Phase 3: Install to Ament**
-- Detects package type (library vs binary)
-- Creates ament index markers
-- Installs binaries to `lib/`
-- Installs source files to `share/`
-- Installs metadata (package.xml if present)
-
-### Directory Structure Created
-
-```
-<install-base>/<package-name>/
-├── lib/
-│   └── <package-name>/          # Binaries (if any)
-│       └── my_binary
-├── share/
-    └── <package-name>/
-        ├── rust/                # Source files
-        │   ├── Cargo.toml
-        │   ├── Cargo.lock
-        │   └── src/
-        ├── package.xml          # Metadata (optional)
-        └── ament_index/         # Discovery markers
-            └── resource_index/
-                ├── packages/
-                │   └── <package-name>
-                └── package_type/
-                    └── <package-name>
-```
-
-### Examples
-
-```bash
-# Install debug build
-cargo ros2 ament-build --install-base install/my_robot
-
-# Install release build (recommended for deployment)
-cargo ros2 ament-build --install-base install/my_robot --release
-
-# Install to specific location
-cargo ros2 ament-build --install-base /opt/ros/my_ws/install/my_robot --release
-```
-
-### Library vs Binary Detection
-
-The tool automatically detects package type:
-
-**Library Package** (no binaries):
-- No `[[bin]]` sections in Cargo.toml
-- No `src/main.rs` file
-- Only source files installed
-
-**Binary Package**:
-- Has `[[bin]]` sections or `src/main.rs`
-- Binaries installed with executable permissions (Unix)
-
----
-
-## cargo ros2 cache
-
-Cache management commands.
-
-### Synopsis
-
-```bash
-cargo ros2 cache <SUBCOMMAND>
-```
-
-### Subcommands
-
-- `list` - List all cached bindings
-- `rebuild <PACKAGE>` - Force rebuild specific package
-- `clean` - Clean all cached bindings
-
----
-
-### cargo ros2 cache list
-
-List all cached package bindings.
-
-#### Synopsis
-
-```bash
-cargo ros2 cache list
-```
-
-#### Description
-
-Displays a table of cached packages showing:
-- Package name
-- ROS distro (e.g., humble, jazzy)
-- Checksum (first 9 chars)
-- Output directory path
-
-#### Example Output
-
-```
-Cached ROS 2 package bindings:
-
-Package                        ROS Distro      Checksum     Output Directory
-----------------------------------------------------------------------------------------------------
-geometry_msgs                  humble          abc123...    /path/to/target/ros2_bindings/geometry_msgs
-sensor_msgs                    humble          def456...    /path/to/target/ros2_bindings/sensor_msgs
-std_msgs                       humble          ghi789...    /path/to/target/ros2_bindings/std_msgs
-
-Total: 3 package(s)
-```
-
----
-
-### cargo ros2 cache rebuild
-
-Force rebuild bindings for a specific package.
-
-#### Synopsis
-
-```bash
-cargo ros2 cache rebuild <PACKAGE>
-```
-
-#### Arguments
-
-| Argument | Description |
-|----------|-------------|
-| `<PACKAGE>` | Package name to rebuild |
-
-#### Description
-
-Removes the package from cache and triggers regeneration on next build.
-
-**Note**: This doesn't regenerate immediately - run `cargo ros2 build` afterward.
-
-#### Examples
-
-```bash
-# Rebuild std_msgs
-cargo ros2 cache rebuild std_msgs
-
-# Then rebuild project
-cargo ros2 build
-```
-
----
-
-### cargo ros2 cache clean
-
-Clean all cached bindings.
-
-#### Synopsis
-
-```bash
-cargo ros2 cache clean
-```
-
-#### Description
-
-Same as `cargo ros2 clean` - removes bindings directory and cache file.
-
-#### Examples
-
-```bash
-# Clean everything
-cargo ros2 cache clean
-```
-
----
-
-## cargo ros2 info
-
-Show detailed information about a ROS 2 package.
-
-### Synopsis
-
-```bash
-cargo ros2 info <PACKAGE>
-```
-
-### Arguments
-
-| Argument | Description |
-|----------|-------------|
-| `<PACKAGE>` | Package name to inspect |
-
-### Description
-
-Displays:
-- Package name
-- Share directory path
-- Interface files:
-  - Messages (.msg)
-  - Services (.srv)
-  - Actions (.action)
-- Cache status (cached or not)
-- Checksum (if cached)
-- Output directory (if cached)
-
-### Examples
-
-```bash
-# Show info for geometry_msgs
-cargo ros2 info geometry_msgs
-```
-
-### Example Output
-
-```
-Package: geometry_msgs
-Share directory: /opt/ros/humble/share/geometry_msgs
-
-Interfaces:
-  Messages (32):
-    - Accel
-    - AccelStamped
-    - AccelWithCovariance
-    - AccelWithCovarianceStamped
-    - Inertia
-    - InertiaStamped
-    - Point
-    - Point32
-    - PointStamped
-    - Polygon
-    - PolygonStamped
-    - Pose
-    - Pose2D
-    - PoseArray
-    - PoseStamped
-    - PoseWithCovariance
-    - PoseWithCovarianceStamped
-    - Quaternion
-    - QuaternionStamped
-    - Transform
-    - TransformStamped
-    - Twist
-    - TwistStamped
-    - TwistWithCovariance
-    - TwistWithCovarianceStamped
-    - Vector3
-    - Vector3Stamped
-    - Wrench
-    - WrenchStamped
-
-Cache status: ✓ Cached
-  Checksum: a1b2c3d4e5f6g7h8
-  Output: /home/user/project/target/ros2_bindings/geometry_msgs
-  ROS Distro: humble
-```
-
----
-
-## cargo-ros2-bindgen
-
-Low-level binding generator CLI. Most users should use `cargo ros2 build` instead.
-
-### Synopsis
-
-```bash
-cargo-ros2-bindgen --package <PACKAGE> --output <PATH> [OPTIONS]
-```
-
-### Options
-
-| Option | Description |
-|--------|-------------|
-| `--package <NAME>` | **Required.** ROS package name to generate bindings for |
-| `--output <PATH>` | **Required.** Output directory for generated package |
-| `--package-path <PATH>` | Optional. Local package path (overrides ament search) |
-| `--verbose` | Enable verbose output |
-
-### Description
-
-Generates Rust bindings for a single ROS 2 package. This is the underlying tool used by `cargo ros2` but can be invoked directly for advanced use cases.
-
-**Workflow**:
-1. Discovers package via ament index (or uses `--package-path`)
-2. Parses all interface files (.msg, .srv, .action)
-3. Generates Rust code (RMW and idiomatic layers)
-4. Creates Cargo.toml with dependencies
-5. Creates build.rs for C library linking
-6. Writes complete package to output directory
-
-### Examples
-
-```bash
-# Generate std_msgs bindings
-cargo-ros2-bindgen --package std_msgs --output target/test/std_msgs
-
-# Generate from local package
-cargo-ros2-bindgen \
-  --package my_msgs \
-  --package-path /path/to/my_msgs \
-  --output target/test/my_msgs
-
-# Verbose output
-cargo-ros2-bindgen \
-  --package geometry_msgs \
-  --output target/test/geometry_msgs \
-  --verbose
-```
-
-### Generated Package Structure
-
-```
-<output>/<package>/
-├── Cargo.toml           # Package manifest with dependencies
-├── build.rs             # Links C libraries (rosidl_generator_c, etc.)
-└── src/
-    ├── lib.rs           # Module exports
-    ├── msg/
-    │   ├── mod.rs
-    │   ├── rmw.rs       # C-compatible FFI types
-    │   └── idiomatic.rs # User-friendly Rust types
-    ├── srv/
-    │   ├── mod.rs
-    │   ├── rmw.rs
-    │   └── idiomatic.rs
-    └── action/
-        ├── mod.rs
-        ├── rmw.rs
-        └── idiomatic.rs
-```
-
----
-
-## Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `AMENT_PREFIX_PATH` | **Required.** Colon-separated list of ROS install paths. Set by sourcing ROS setup.bash. |
-| `ROS_DISTRO` | ROS distribution name (e.g., humble, jazzy). Used for cache tagging. |
-
-### Example
-
-```bash
-# Source ROS to set environment variables
-source /opt/ros/humble/setup.bash
-
-# Verify variables
-echo $AMENT_PREFIX_PATH
-# /opt/ros/humble
-
-echo $ROS_DISTRO
-# humble
-```
-
----
-
-## Exit Codes
-
-| Code | Description |
-|------|-------------|
-| 0 | Success |
-| 1 | General error (missing dependencies, build failure, etc.) |
-| 101 | Missing Cargo.toml |
-| 102 | ROS not sourced (AMENT_PREFIX_PATH not set) |
-| 103 | Package not found in ament index |
-
----
-
-## Files and Directories
-
-### Project Files
-
-| Path | Description |
-|------|-------------|
-| `.ros2_bindgen_cache` | Cache metadata (JSON) with checksums and timestamps |
-| `.cargo/config.toml` | Per-crate config with `[patch.crates-io]` + `[build] rustflags` (auto-generated by `colcon build`) |
-| `target/ros2_bindings/` | Generated binding packages (project-local) |
-
-### Cache Format
-
-```json
-{
-  "entries": {
-    "std_msgs": {
-      "package_name": "std_msgs",
-      "checksum": "a1b2c3d4e5f6...",
-      "ros_distro": "humble",
-      "package_version": null,
-      "timestamp": 1730764800,
-      "output_dir": "/home/user/project/target/ros2_bindings/std_msgs"
-    }
-  }
-}
-```
-
----
-
-## Performance Tips
-
-1. **Use `--release` for ament-build**: Production deployments should use release builds:
-   ```bash
-   cargo ros2 ament-build --install-base install/my_pkg --release
-   ```
-
-2. **Parallel generation**: For projects with many dependencies, generation is automatically parallelized. Expect 3-5x speedup on multi-core systems.
-
-3. **Cache reuse**: Avoid `cargo ros2 clean` unless necessary. The cache prevents unnecessary regeneration.
-
-4. **Incremental builds**: Use `cargo ros2 build` repeatedly - only modified packages regenerate.
-
----
-
-## Troubleshooting
-
-### "Failed to load ament index"
-
-**Cause**: ROS not sourced (AMENT_PREFIX_PATH not set).
-
-**Solution**:
-```bash
-source /opt/ros/humble/setup.bash  # or your ROS distro
-cargo ros2 build
-```
-
-### "Package 'foo' not found in ament index"
-
-**Cause**: Package not installed or not in AMENT_PREFIX_PATH.
-
-**Solution**:
-```bash
-# Install package
-sudo apt install ros-humble-foo
-
-# Or add workspace overlay
-source /path/to/my_ws/install/setup.bash
-```
-
-### Stale bindings after updating ROS packages
-
-**Cause**: Cache checksum doesn't detect system package updates.
-
-**Solution**:
-```bash
-# Rebuild specific package
-cargo ros2 cache rebuild foo
-
-# Or clean everything
-cargo ros2 cache clean
-cargo ros2 build
-```
-
-### IDE can't resolve ROS message dependencies
-
-**Cause**: `.cargo/config.toml` not yet generated (need to run `colcon build` first).
-
-**Solution**: Run `colcon build` — it automatically generates `.cargo/config.toml` with `[patch.crates-io]` entries in each Cargo workspace/crate. After the build, `cargo metadata` and `cargo check` will work without `--config`.
-
----
-
-## See Also
-
-- [README.md](../README.md) - Project overview
-- [DESIGN.md](DESIGN.md) - Architecture details
-- [ROADMAP.md](ROADMAP.md) - Development progress
-- [examples/](../examples/) - Example projects
-
----
-
-**Last Updated**: 2025-11-04
+- [Working with `cargo` Directly](../packages/colcon-cargo-ros2/README.md) — what one `colcon build` gives you
+- [docs/troubleshooting.md](troubleshooting.md) — keyed by the error message

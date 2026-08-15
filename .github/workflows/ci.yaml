@@ -51,6 +51,19 @@ jobs:
         working-directory: packages
         run: cargo +stable test --workspace
 
+  supply-chain:
+    name: Supply Chain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Advisories, licences, wildcard dependencies and registry sources.
+      # Policy lives in packages/deny.toml.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: packages/Cargo.toml
+          command: check
+
   python-test:
     name: Python Tests
     runs-on: ubuntu-latest

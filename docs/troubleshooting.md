@@ -1,6 +1,11 @@
 # Troubleshooting Guide
 
-Common issues and solutions when using cargo-ros2.
+Common issues and solutions.
+
+> **Reviewed 2026-08-16.** This guide previously used `cargo ros2 build`,
+> `cache` and `info` commands that were planned and never built. Every command
+> below was checked against the real CLI; see
+> [cli-reference.md](cli-reference.md).
 
 ## Table of Contents
 
@@ -37,7 +42,7 @@ echo $ROS_DISTRO
 # Should output: humble (or your distro)
 
 # Try again
-cargo ros2 build
+colcon build
 ```
 
 **Permanent fix**: Add to your `.bashrc` or `.zshrc`:
@@ -66,7 +71,7 @@ apt search ros-humble-vision
 sudo apt install ros-humble-vision-msgs
 
 # Verify installation
-cargo ros2 info vision_msgs
+colcon-cargo-ros2-doctor  # checks the whole chain, including this package
 ```
 
 **Solution 2 - Source workspace overlay**:
@@ -79,7 +84,7 @@ echo $AMENT_PREFIX_PATH
 # Should output: /path/to/my_workspace/install:/opt/ros/humble
 
 # Try again
-cargo ros2 build
+colcon build
 ```
 
 ---
@@ -106,8 +111,8 @@ echo $ROS_DISTRO
 # Should output: jazzy
 
 # Clean cache and rebuild
-cargo ros2 cache clean
-cargo ros2 build
+colcon-cargo-ros2 clean
+colcon build
 ```
 
 ---
@@ -143,7 +148,7 @@ cargo install --path cargo-ros2
 
 # Verify
 which cargo-ros2-bindgen
-cargo ros2 --version
+colcon-cargo-ros2 --help  # confirms the wheel is installed and importable
 ```
 
 ---
@@ -169,7 +174,7 @@ echo $LD_LIBRARY_PATH
 
 # Clean and rebuild
 cargo clean
-cargo ros2 build
+colcon build
 ```
 
 **If problem persists**:
@@ -214,13 +219,13 @@ error[E0277]: the trait bound `Foo: Message` is not satisfied
 **Solution**:
 ```bash
 # Rebuild specific package
-cargo ros2 cache rebuild foo
+colcon build --packages-select foo
 
 # Or clean everything
-cargo ros2 cache clean
+colcon-cargo-ros2 clean
 
 # Rebuild
-cargo ros2 build
+colcon build
 ```
 
 ### Start here: `cargo ros2 doctor`
@@ -460,11 +465,11 @@ just build-python && just install
 **Solution**:
 ```bash
 # Rebuild specific package
-cargo ros2 cache rebuild geometry_msgs
+colcon build  # regenerates whatever changed
 
 # Or clean all cache
-cargo ros2 cache clean
-cargo ros2 build
+colcon-cargo-ros2 clean
+colcon build
 ```
 
 **Explanation**: Checksums are calculated from interface files. If apt updates a package but files have same content, checksum doesn't change. Force rebuild to regenerate.
@@ -483,13 +488,13 @@ df -h shows target/ros2_bindings/ is very large
 **Solution**:
 ```bash
 # List cached packages
-cargo ros2 cache list
+ls build/*/rosidl_cargo  # the generated crates
 
 # Clean all cache
-cargo ros2 cache clean
+colcon-cargo-ros2 clean
 
 # Or selectively remove unused packages
-cargo ros2 cache rebuild unused_package  # removes from cache
+colcon-cargo-ros2 clean  # drops generated bindings for this crate
 ```
 
 **Prevention**: Add to `.gitignore`:
@@ -528,7 +533,7 @@ Warning: Binary not found: my_binary (did you run with --release?)
 **Solution**:
 ```bash
 # If you used --release flag
-cargo ros2 ament-build --install-base install/my_pkg --release
+colcon-cargo-ros2 install --install-base install/my_pkg --profile release
 
 # Verify binary exists
 ls target/release/my_binary
@@ -563,7 +568,7 @@ path = "src/main.rs"
 EOF
 
 # Rebuild
-cargo ros2 ament-build --install-base install/my_pkg --release
+colcon-cargo-ros2 install --install-base install/my_pkg --profile release
 ```
 
 ---
@@ -583,10 +588,10 @@ Error: Failed to create directory: Permission denied
 # Instead, install to local directory
 
 # Install to local workspace
-cargo ros2 ament-build --install-base install/my_pkg --release
+colcon-cargo-ros2 install --install-base install/my_pkg --profile release
 
 # Or install to writable location
-cargo ros2 ament-build --install-base ~/ros_workspace/install/my_pkg --release
+colcon-cargo-ros2 install --install-base ~/ros_workspace/install/my_pkg --profile release
 ```
 
 ---
@@ -596,7 +601,7 @@ cargo ros2 ament-build --install-base ~/ros_workspace/install/my_pkg --release
 ### Slow binding generation
 
 **Symptoms**:
-- `cargo ros2 build` takes 30+ seconds
+- `colcon build` takes 30+ seconds
 - Many packages regenerating unnecessarily
 
 **Cause**: Cache misses or disabled parallelization.
@@ -606,7 +611,7 @@ cargo ros2 ament-build --install-base ~/ros_workspace/install/my_pkg --release
 **1. Check cache status**:
 ```bash
 # See what's cached
-cargo ros2 cache list
+ls build/*/rosidl_cargo  # the generated crates
 
 # If empty, first build will be slow (normal)
 ```
@@ -614,7 +619,7 @@ cargo ros2 cache list
 **2. Verify parallel generation**:
 ```bash
 # Watch output for parallel indicator
-cargo ros2 build --verbose
+colcon build --event-handlers console_direct+
 
 # Should see:
 # Generating bindings for 3 packages...
@@ -641,10 +646,10 @@ cargo ros2 build --verbose
 **Solution**:
 ```bash
 # Use release profile (faster runtime, slower compile)
-cargo ros2 build
+colcon build
 
 # Or use check instead of build (type-check only)
-cargo ros2 check  # much faster
+cargo check  # much faster, and works after one colcon build
 
 # Or use cargo's own caching
 # Subsequent builds are incremental
@@ -655,7 +660,7 @@ cargo ros2 check  # much faster
 ### Hot build still regenerates bindings
 
 **Symptoms**:
-- Second `cargo ros2 build` regenerates packages
+- Second `colcon build` regenerates packages
 - Cache exists but not used
 
 **Cause**: Output directory deleted (`cargo clean`).
@@ -666,7 +671,7 @@ cargo ros2 check  # much faster
 cargo ros2 clean  # preserves cache metadata
 
 # Or rebuild cache if you already ran cargo clean
-cargo ros2 build  # will regenerate (one-time cost)
+colcon build  # will regenerate (one-time cost)
 ```
 
 ---
@@ -677,9 +682,9 @@ cargo ros2 build  # will regenerate (one-time cost)
 
 ```bash
 # All commands support --verbose
-cargo ros2 build --verbose
-cargo ros2 ament-build --install-base install/my_pkg --verbose --release
-cargo ros2 info std_msgs --verbose
+colcon build --event-handlers console_direct+
+colcon-cargo-ros2 install --install-base install/my_pkg --profile release --verbose
+colcon-cargo-ros2-doctor
 
 # Shows:
 # - Ament package discovery
@@ -771,7 +776,7 @@ ros2 pkg prefix std_msgs
 
 ```bash
 # Trace file operations
-strace -e open,openat,stat cargo ros2 build 2>&1 | grep ament
+strace -e open,openat,stat colcon build 2>&1 | grep ament
 
 # Trace library loading
 strace -e open,openat cargo build 2>&1 | grep rosidl
@@ -783,10 +788,10 @@ strace -e open,openat cargo build 2>&1 | grep rosidl
 
 ```bash
 # Enable debug logging (if implemented)
-RUST_LOG=debug cargo ros2 build
+RUST_LOG=debug colcon build
 
 # Or specific modules
-RUST_LOG=cargo_ros2::workflow=debug cargo ros2 build
+RUST_LOG=cargo_ros2::workflow=debug colcon build
 ```
 
 ---
@@ -809,7 +814,7 @@ If you encounter a bug:
 2. **Gather information**:
    ```bash
    # Cargo-ros2 version
-   cargo ros2 --version
+   colcon-cargo-ros2 --help  # confirms the wheel is installed and importable
 
    # ROS environment
    echo "ROS_DISTRO=$ROS_DISTRO"
@@ -824,7 +829,7 @@ If you encounter a bug:
    uname -a        # All systems
 
    # Verbose output
-   cargo ros2 build --verbose 2>&1 | tee build.log
+   colcon build --event-handlers console_direct+ 2>&1 | tee build.log
    ```
 
 3. **Create minimal reproduction**:
@@ -833,7 +838,7 @@ If you encounter a bug:
    cargo new minimal_repro
    cd minimal_repro
    echo 'std_msgs = "*"' >> Cargo.toml
-   cargo ros2 build --verbose
+   colcon build --event-handlers console_direct+
    ```
 
 4. **Open issue** with:
@@ -852,7 +857,7 @@ If you encounter a bug:
 
 ```bash
 # WRONG - Don't do this
-sudo cargo ros2 build
+sudo colcon build
 ```
 
 **Why**: Cargo tools should never run as root. Use local install directories.
@@ -900,7 +905,7 @@ git add target/ros2_bindings/
 | "Failed to load ament index" | `source /opt/ros/humble/setup.bash` |
 | "Package 'foo' not found" | `sudo apt install ros-humble-foo` |
 | "cargo-ros2-bindgen not found" | `just build` in cargo-ros2 source |
-| Stale bindings | `cargo ros2 cache rebuild <pkg>` |
+| Stale bindings | `colcon build` (regenerates), or `COLCON_CARGO_ROS2_SKIP_STAMP_CHECK=1` to build anyway |
 | Slow first build | Normal - bindings cached after first run |
 | Permission denied on install | Use local install path, not system |
 | Linker errors | `source /opt/ros/humble/setup.bash` |

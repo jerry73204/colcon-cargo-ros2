@@ -117,6 +117,35 @@ colcon build
 
 ---
 
+### `No module named 'lark'`, or `module 'em' has no attribute 'BUFFERED_OPT'`
+
+**Symptoms**: a CMake interface package in the workspace — not a Rust one —
+fails during `rosidl_adapt_interfaces` or `rosidl_generator_c`:
+
+```
+AttributeError: module 'em' has no attribute 'BUFFERED_OPT'
+ModuleNotFoundError: No module named 'lark'
+```
+
+**Cause**: this extension was installed into an isolated virtualenv. CMake runs
+whichever `python3` is first on `PATH`, so ROS's own generators execute under an
+interpreter that cannot see ROS's Python dependencies. `empy` compounds it:
+ROS needs 3.3.4 and `colcon-core` declares `empy` unpinned, so a fresh
+virtualenv resolves 4.x.
+
+**Solution**: install with `pip install --user`, or create the virtualenv with
+system site packages so the existing ROS ones are visible:
+
+```bash
+python3 -m venv --system-site-packages ~/.venvs/ros
+~/.venvs/ros/bin/pip install colcon-cargo-ros2
+```
+
+Neither error mentions Rust or this extension, so it is easy to chase in the
+wrong direction.
+
+---
+
 ## Build Errors
 
 ### "cargo-ros2-bindgen not found"

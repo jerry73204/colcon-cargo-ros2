@@ -17,7 +17,7 @@
 ### From PyPI (Recommended)
 
 ```bash
-pip install colcon-cargo-ros2
+pip install --user colcon-cargo-ros2
 ```
 
 ### From Source
@@ -25,8 +25,32 @@ pip install colcon-cargo-ros2
 ```bash
 git clone https://github.com/jerry73204/colcon-cargo-ros2.git
 cd colcon-cargo-ros2
-pip install packages/colcon-cargo-ros2/
+pip install --user packages/colcon-cargo-ros2/
 ```
+
+### If you install into a virtualenv
+
+Create it with `--system-site-packages`:
+
+```bash
+python3 -m venv --system-site-packages ~/.venvs/ros
+~/.venvs/ros/bin/pip install colcon-cargo-ros2
+```
+
+An isolated virtualenv breaks the *other* packages in your workspace, not this
+one. CMake picks up whichever `python3` is first on `PATH`, so an interface
+package built with `rosidl_generate_interfaces` then runs ROS's own generators
+under an interpreter that cannot see ROS's Python dependencies:
+
+```
+ModuleNotFoundError: No module named 'lark'
+AttributeError: module 'em' has no attribute 'BUFFERED_OPT'
+```
+
+The second one is `empy`: ROS needs 3.3.4, and `colcon-core` declares `empy`
+without an upper bound, so a fresh virtualenv resolves 4.x. `--system-site-packages`
+lets the existing 3.3.4 satisfy it. Neither error mentions Rust or this
+extension, which is why they are worth naming here.
 
 ## Quick Start
 

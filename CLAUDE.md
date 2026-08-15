@@ -427,6 +427,18 @@ Ensures:
 
 ## Recent Architectural Improvements
 
+### One Source for the Version (2026-08-15)
+
+**Problem** (issue #5): `colcon_cargo_ros2.__version__` was a literal that `just bump-version` did not rewrite, so it reported 0.2.0 while pyproject.toml and Cargo.toml were on 0.4.1 — wrong across several releases, and read by the skew guard the build task uses.
+
+**Solution**: `colcon_cargo_ros2/_version.py` resolves it once (source `pyproject.toml`, falling back to installed distribution metadata); `__init__.py` exposes it through a PEP 562 `__getattr__`, so there is no literal left to drift. The build task's `python_package_version()` now delegates there instead of carrying its own copy.
+
+**Guard**: `just bump-version` verifies pyproject.toml and Cargo.toml agree after rewriting them, and fails if a `sed` missed one — the failure mode that produced the drift. A test asserts `__version__` equals the pyproject version, which would have caught it years earlier.
+
+**Removed**: `setup.py` and `setup.cfg`. Nothing built through them — the backend is maturin — and `setup.cfg` carried a fourth version declaration plus metadata from the upstream project this was forked from (wrong author, wrong URLs, dependencies on `cargo-ament-build`). `stdeb.cfg` is left alone; it is inert without `setup.py`, so decide what to do with it when Debian packaging comes up.
+
+---
+
 ### Console Scripts for the CLI Operations (2026-08-15)
 
 **Problem** (issue #4): `packages/cargo-ros2` builds a `cargo-ros2` binary with `bindgen`, `install`, `clean` and `doctor` subcommands, but the wheel contains only the PyO3 extension module. Anyone who installed from PyPI had none of them, while CLAUDE.md claimed the wheel "bundles the Rust tools".

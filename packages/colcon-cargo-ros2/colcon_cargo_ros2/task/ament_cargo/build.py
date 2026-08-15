@@ -12,6 +12,7 @@ from colcon_core.task import TaskExtensionPoint, run
 
 # Import Rust library directly via PyO3 bindings
 from colcon_cargo_ros2 import cargo_ros2_py
+from colcon_cargo_ros2._version import package_version
 from colcon_cargo_ros2.workspace_bindgen import generate_workspace_bindings
 
 logger = colcon_logger.getChild(__name__)
@@ -26,41 +27,8 @@ def find_cargo_executable():
 
 
 def python_package_version(source_root=None):
-    """Version of the Python code being executed, or None if it cannot be read.
-
-    Prefers ``pyproject.toml`` from the source tree over installed distribution
-    metadata. Under an editable install the two disagree routinely -- the ``.pth``
-    runs the source tree while the recorded metadata is from whenever a wheel was
-    last installed -- and it is the source tree that is paired with the native
-    module built alongside it.
-
-    :param source_root: Directory holding pyproject.toml; defaults to the
-      package's own source root
-    """
-    if source_root is None:
-        source_root = Path(__file__).resolve().parents[3]
-
-    pyproject = Path(source_root) / "pyproject.toml"
-    if pyproject.is_file():
-        try:
-            try:
-                import tomllib
-            except ImportError:
-                import tomli as tomllib
-
-            with open(pyproject, "rb") as f:
-                version = tomllib.load(f).get("project", {}).get("version")
-            if version:
-                return version
-        except Exception:
-            pass
-
-    try:
-        from importlib.metadata import version as distribution_version
-
-        return distribution_version("colcon-cargo-ros2")
-    except Exception:
-        return None
+    """Version of the Python code being executed; see :mod:`colcon_cargo_ros2._version`."""
+    return package_version(source_root)
 
 
 def check_version_skew(native_version, python_version):

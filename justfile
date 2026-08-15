@@ -93,6 +93,18 @@ bump-version VERSION:
     sed -i 's/^version = ".*"/version = "{{VERSION}}"/' packages/colcon-cargo-ros2/Cargo.toml
     echo "✓ Updated packages/colcon-cargo-ros2/Cargo.toml"
 
+    # Nothing else carries the version: colcon_cargo_ros2.__version__ reads
+    # pyproject.toml, and the native module reports what Cargo.toml said when it
+    # was built. Check the two agree rather than trusting the sed above -- a
+    # silent drift is what left __version__ reporting 0.2.0 for several releases.
+    pyproject_version=$(grep -m1 '^version = ' packages/colcon-cargo-ros2/pyproject.toml | cut -d'"' -f2)
+    cargo_version=$(grep -m1 '^version = ' packages/colcon-cargo-ros2/Cargo.toml | cut -d'"' -f2)
+    if [ "$pyproject_version" != "$cargo_version" ]; then
+        echo "✗ pyproject.toml says $pyproject_version, Cargo.toml says $cargo_version" >&2
+        exit 1
+    fi
+    echo "✓ pyproject.toml and Cargo.toml agree: $pyproject_version"
+
     echo ""
     echo "Version bumped to {{VERSION}}"
     echo "Updated files:"

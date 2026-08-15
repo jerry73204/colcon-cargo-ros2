@@ -103,6 +103,18 @@ def _warn_once(key: str, message: str):
     logger.warning(message)
 
 
+def _note_once(key: str, message: str):
+    """Log *message* at info level the first time *key* is seen in this process.
+
+    For things worth being able to look up but not worth interrupting over --
+    where the build is correct and the user may have had a good reason.
+    """
+    if key in _REPORTED_MISMATCHES:
+        return
+    _REPORTED_MISMATCHES.add(key)
+    logger.info(message)
+
+
 def _read_toml(path: Path) -> Dict:
     """Parse a TOML file, returning an empty mapping when it cannot be read."""
     try:
@@ -625,15 +637,24 @@ class WorkspaceBindingGenerator:
                 xml_dep_names = set(d.name for d in xml_deps)
                 xml_interface_deps = xml_dep_names & set(interface_packages)
 
-                # Check for interface packages in package.xml but not in Cargo.toml
+                # Interface packages declared in package.xml that this crate never
+                # compiles against.
+                #
+                # Not a warning: declaring one is often right. A launch file in
+                # this package may start a node that publishes the type, or the
+                # dependency may be there for the ament environment. Neither
+                # appears in Cargo.toml, and warning would ask the user to delete
+                # a correct declaration. What it does cost is binding generation,
+                # so say that, at a level someone can go looking for.
                 missing_in_cargo = xml_interface_deps - cargo_deps
                 if missing_in_cargo:
                     names = ", ".join(sorted(missing_in_cargo))
-                    _warn_once(
+                    _note_once(
                         f"{pkg_name}:missing-in-cargo:{names}",
-                        f"{pkg_name}: declared in package.xml but not used in Cargo.toml: "
-                        f"{names}. Bindings are generated for them regardless; drop the "
-                        "<depend> tags if they are not needed.",
+                        f"{pkg_name}: bindings generated for {names}, which package.xml "
+                        "declares but Cargo.toml does not use. Correct if the dependency "
+                        "is only needed at runtime; otherwise dropping the <depend> tag "
+                        "saves generating them.",
                     )
 
                 # Check for interface packages in Cargo.toml but not in package.xml.

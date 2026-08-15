@@ -37,6 +37,26 @@ def _fresh_warning_state():
 
 
 @pytest.fixture
+def notes_log():
+    """Collect info-level messages the module logs."""
+    records = []
+
+    class _Collector(logging.Handler):
+        def emit(self, record):
+            records.append(record.getMessage())
+
+    handler = _Collector(level=logging.INFO)
+    workspace_bindgen.logger.addHandler(handler)
+    previous = workspace_bindgen.logger.level
+    workspace_bindgen.logger.setLevel(logging.INFO)
+    try:
+        yield records
+    finally:
+        workspace_bindgen.logger.setLevel(previous)
+        workspace_bindgen.logger.removeHandler(handler)
+
+
+@pytest.fixture
 def warnings_log():
     """Collect warnings logged by the module.
 
@@ -181,8 +201,29 @@ class TestUndeclaredInterfaceDependency:
 
 
 class TestDeclaredButUnusedDependency:
-    def test_warns_once(self, tmp_path, monkeypatch, warnings_log):
+    """A package may declare an interface package it never compiles against.
+
+    A launch file that starts a node publishing that type, or a dependency
+    inherited for the ament environment, are both correct and neither shows up
+    in Cargo.toml. Warning about them asks the user to delete a right answer, so
+    this direction is reported as a note about the cost, not a problem.
+    """
+
+    def test_does_not_warn(self, tmp_path, monkeypatch, warnings_log):
         desc = _cargo_package(tmp_path, "pkg_c", cargo_deps=[], xml_deps=["geometry_msgs"])
+
+        _validate(
+            tmp_path,
+            {"pkg_c": desc},
+            {"geometry_msgs": tmp_path / "share" / "geometry_msgs"},
+            monkeypatch,
+        )
+
+        assert warnings_log == []
+
+    def test_is_noted_once(self, tmp_path, monkeypatch, notes_log):
+        desc = _cargo_package(tmp_path, "pkg_c", cargo_deps=[], xml_deps=["geometry_msgs"])
+
         for _ in range(3):
             _validate(
                 tmp_path,
@@ -191,7 +232,26 @@ class TestDeclaredButUnusedDependency:
                 monkeypatch,
             )
 
-        assert len([msg for msg in warnings_log if "geometry_msgs" in msg]) == 1
+        mentions = [msg for msg in notes_log if "geometry_msgs" in msg]
+        assert len(mentions) == 1
+        # Phrased as what it costs, not as something done wrong.
+        assert "bindings" in mentions[0].lower()
+
+    def test_undeclared_direction_still_warns(self, tmp_path, monkeypatch, warnings_log):
+        """The direction that breaks the build keeps its warning."""
+        desc = _cargo_package(
+            tmp_path, "pkg_d", cargo_deps=["sensor_msgs"], xml_deps=["geometry_msgs"]
+        )
+
+        _validate(
+            tmp_path,
+            {"pkg_d": desc},
+            {"geometry_msgs": tmp_path / "share" / "geometry_msgs"},
+            monkeypatch,
+            known_interfaces={"sensor_msgs"},
+        )
+
+        assert any("sensor_msgs" in msg for msg in warnings_log)
 
 
 # ---------------------------------------------------------------------------

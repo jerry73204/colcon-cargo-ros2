@@ -343,6 +343,27 @@ colcon build --rosidl-runtime-rs-version 0.5
 
 **Related**: `rclrs = "*"` cannot be matched at all, because cargo resolves it to whatever is newest. Pin it.
 
+### A dependency is declared in package.xml but never used in Cargo.toml
+
+This is **not** reported as a problem, because it is often correct: a launch
+file in the package may start a node publishing that type, or the dependency may
+be there for the ament environment. Neither shows up in `Cargo.toml`.
+
+It does cost something — bindings are generated for it — so the build says so at
+info level:
+
+```console
+$ colcon --log-level info build
+... installer_node: bindings generated for geometry_msgs, which package.xml
+    declares but Cargo.toml does not use. Correct if the dependency is only
+    needed at runtime; otherwise dropping the <depend> tag saves generating them.
+```
+
+Note the flag position: `--log-level` belongs to `colcon`, before the verb.
+
+The opposite direction — used in `Cargo.toml`, missing from `package.xml` — *is*
+a warning, because the build then fails with a misleading crates.io error.
+
 ### `redeclaration of enumerator` when building an action
 
 **Symptoms**: building your own interface package fails inside rosidl's C generator, before anything Rust-related runs:

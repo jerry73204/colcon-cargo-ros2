@@ -7,6 +7,10 @@
   <license>Apache-2.0</license>
 
   <depend>std_msgs</depend>
+  <!-- Needed only at runtime: launch/demo.launch.py starts a node publishing
+       this type. It never appears in Cargo.toml, and a build must not complain
+       about that. -->
+  <depend>geometry_msgs</depend>
 
   <export>
     <build_type>ament_cargo</build_type>

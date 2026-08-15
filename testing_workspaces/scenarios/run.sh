@@ -98,7 +98,22 @@ build() {
         mkdir -p src/preset_config/.cargo
         [ -f src/preset_config/.cargo/config.toml ] ||
             cp src/preset_config/preset.config.toml src/preset_config/.cargo/config.toml
-        colcon build "$@"
+        # `--log-level` belongs to colcon itself, before the verb; everything
+        # else is an argument to `build`.
+        local main_args=() verb_args=()
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --log-level)
+                    main_args+=("$1" "$2")
+                    shift 2
+                    ;;
+                *)
+                    verb_args+=("$1")
+                    shift
+                    ;;
+            esac
+        done
+        colcon "${main_args[@]}" build "${verb_args[@]}"
     ) >"$(log_for build)" 2>&1
 }
 
@@ -361,6 +376,27 @@ scenario_cargo_args_release() {
     fi
 }
 
+# A dependency declared in package.xml and never compiled against.
+#
+# installer_node's launch file starts a node publishing geometry_msgs, so the
+# declaration is correct and the crate has no reason to name it in Cargo.toml.
+# Warning about that would ask the user to delete a right answer; the cost --
+# bindings generated for it -- is still worth being able to look up.
+scenario_runtime_only_dependency() {
+    local dir
+    dir=$(fresh runtime_only_dependency)
+
+    build "$dir" --packages-select installer_node
+    expect_absent "$(log_for build)" "not used in Cargo.toml" \
+        "a runtime-only dependency does not produce a warning"
+    expect_absent "$(log_for build)" "WARNING" "the build is quiet"
+
+    # Still discoverable when asked for.
+    build "$dir" --log-level info --packages-select installer_node
+    expect_contains "$(log_for build)" "bindings generated for geometry_msgs" \
+        "the cost is reported at info level"
+}
+
 # A package at the colcon workspace root rather than under src/.
 scenario_package_at_workspace_root() {
     local dir="$WORK/package_at_workspace_root"
@@ -403,6 +439,7 @@ ALL_SCENARIOS=(
     source_tree_clean
     cargo_args_release
     package_at_workspace_root
+    runtime_only_dependency
 )
 
 # Scenarios that only read a healthy workspace share one build.

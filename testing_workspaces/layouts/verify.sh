@@ -81,6 +81,11 @@ assert_contains "$nested_cfg" '../../../../../build/local_msgs' "nested_node pat
 assert_contains "$nested_cfg" "install/local_msgs/lib" "nested_node links against the workspace-local package"
 assert_absent "$standalone_cfg" "install/local_msgs/lib" "standalone_node does not"
 
+section "A dependency used only at runtime"
+installer_cfg=src/installer_node/.cargo/config.toml
+assert_contains "$installer_cfg" "geometry_msgs = { path" \
+    "bindings are generated for a package declared but not used in Cargo.toml"
+
 section "The user's own config survives"
 assert_contains "$preset_cfg" 'target-dir = "cargo-target-of-my-own"' "user target-dir kept"
 assert_absent "$preset_cfg" "build/.cargo_target" "generated target-dir stepped aside"

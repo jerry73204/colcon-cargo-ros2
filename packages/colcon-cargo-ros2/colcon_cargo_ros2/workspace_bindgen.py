@@ -46,6 +46,19 @@ INTERFACE_SUFFIXES = (".msg", ".srv", ".action", ".idl")
 # Subdirectories whose presence marks a package as an interface package.
 INTERFACE_SUBDIRS = ("msg", "srv", "action")
 
+# Sentinel for "not computed yet", since None is a meaningful answer.
+_UNSET = object()
+
+# Which rosidl_runtime_rs each published rclrs depends on.
+#
+# Generated crates must ask for the same one: cargo treats 0.5 and 0.6 as
+# incompatible, so a mismatch leaves two copies in the graph and the `Message`
+# trait a generated crate implements is not the one rclrs requires.
+RCLRS_RUNTIME_VERSIONS = {
+    "0.6": "0.5",
+    "0.7": "0.6",
+}
+
 # Dependency mismatches already reported, so the user reads each one once.
 # Binding generation reruns for every package build task in a build, which
 # would otherwise repeat every warning once per Cargo package in the workspace.
@@ -127,6 +140,49 @@ def _dependency_tables(manifest: Dict):
                     yield table
 
 
+def _cargo_dependency_requirements(cargo_toml_path: Path) -> Dict[str, str]:
+    """Map dependency name → declared version requirement, where one is given.
+
+    Covers the plain-string form (``rclrs = "0.7"``) and the table form
+    (``rclrs = { version = "0.7", features = [...] }``); a path or git dependency
+    contributes nothing, having no version to report.
+    """
+    manifest = _read_toml(cargo_toml_path)
+    requirements: Dict[str, str] = {}
+    for table in _dependency_tables(manifest):
+        for name, spec in table.items():
+            if isinstance(spec, str):
+                requirements[name] = spec
+            elif isinstance(spec, dict) and isinstance(spec.get("version"), str):
+                requirements[name] = spec["version"]
+    return requirements
+
+
+def _is_unbounded(requirement: str) -> bool:
+    """True for a requirement that names no version at all, like ``*``."""
+    return requirement.strip() in {"*", ""}
+
+
+def _major_minor(requirement: Optional[str]) -> Optional[str]:
+    """Reduce a version requirement to ``major.minor``.
+
+    ``"0.7"``, ``"0.7.1"`` and ``"^0.7"`` all identify the same 0.x compatibility
+    bucket, which is the granularity that decides whether cargo unifies.
+    """
+    if not requirement:
+        return None
+    cleaned = requirement.strip().lstrip("^~=><* ")
+    parts = cleaned.split(".")
+    if len(parts) < 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        return None
+    return f"{parts[0]}.{parts[1]}"
+
+
+def _version_key(version: str):
+    """Sort key for ``major.minor`` strings."""
+    return tuple(int(part) for part in version.split("."))
+
+
 def _cargo_toml_has_workspace(cargo_toml_path: Path) -> bool:
     """Check whether a Cargo.toml contains a ``[workspace]`` section.
 
@@ -172,6 +228,10 @@ class WorkspaceBindingGenerator:
         # the interface subset: a crate may link a C library from any ROS package
         # it declares. Same "absent means unknown" rule.
         self._package_all_deps: Dict[str, Set[str]] = {}
+
+        # Resolved once per build; _UNSET distinguishes "not yet worked out"
+        # from "the workspace expressed no opinion".
+        self._runtime_version = _UNSET
 
     def try_acquire_lock(self) -> bool:
         """Try to acquire the binding generation lock.
@@ -395,6 +455,87 @@ class WorkspaceBindingGenerator:
         if pkg_share is None:
             return False
         return _has_interface_definitions(pkg_share)
+
+    def _detect_runtime_version(self) -> Optional[str]:
+        """The rosidl_runtime_rs version generated crates should depend on.
+
+        Derived from the workspace's own packages, because it has to match what
+        their `rclrs` already pulls in. Getting it wrong is not a warning: cargo
+        keeps both versions and the build fails with a trait mismatch that names
+        the runtime crate rather than anything the user wrote.
+
+        A package that declares `rosidl_runtime_rs` says so directly; one that
+        only declares `rclrs` implies it through :data:`RCLRS_RUNTIME_VERSIONS`.
+
+        Returns None when the workspace expresses no opinion, leaving the
+        generator's own default in place.
+        """
+        if self._runtime_version is not _UNSET:
+            return self._runtime_version
+
+        self._runtime_version = self._compute_runtime_version()
+        return self._runtime_version
+
+    def _compute_runtime_version(self) -> Optional[str]:
+        """Work out the version; see :meth:`_detect_runtime_version`."""
+        override = getattr(self.args, "rosidl_runtime_rs_version", None)
+        if override:
+            return override
+
+        from colcon_cargo_ros2.package_augmentation import RustBindingAugmentation
+
+        cargo_descriptors = getattr(RustBindingAugmentation, "_cargo_descriptors", {})
+
+        # runtime version -> packages asking for it, for a legible conflict report
+        wanted: Dict[str, List[str]] = {}
+        for pkg_name, desc in cargo_descriptors.items():
+            requirements = _cargo_dependency_requirements(Path(desc.path) / "Cargo.toml")
+
+            declared = requirements.get("rosidl_runtime_rs")
+            rclrs = requirements.get("rclrs")
+
+            if declared is not None:
+                version = _major_minor(declared)
+            elif rclrs is not None:
+                version = RCLRS_RUNTIME_VERSIONS.get(_major_minor(rclrs))
+                if version is None and _is_unbounded(rclrs):
+                    # `rclrs = "*"` resolves to whatever is newest, which may not
+                    # be the version the rest of the workspace is built for. The
+                    # symptom is a trait mismatch inside this package alone.
+                    _warn_once(
+                        f"unbounded-rclrs:{pkg_name}",
+                        f'{pkg_name} declares rclrs = "{rclrs}", so cargo resolves it to '
+                        "whatever version is newest.\n"
+                        "  Generated bindings cannot be matched to an unbounded requirement; "
+                        'pin a version (e.g. rclrs = "0.7") to have them agree.',
+                    )
+            else:
+                version = None
+
+            if version:
+                wanted.setdefault(version, []).append(pkg_name)
+
+        if not wanted:
+            return None
+        if len(wanted) == 1:
+            return next(iter(wanted))
+
+        # More than one, and one shared set of generated crates cannot satisfy
+        # both. Say which packages disagree; cargo's own error names neither.
+        chosen = max(wanted, key=_version_key)
+        detail = "; ".join(
+            f"{version} ({', '.join(sorted(pkgs))})" for version, pkgs in sorted(wanted.items())
+        )
+        _warn_once(
+            "runtime-version-conflict:" + detail,
+            "Packages in this workspace need different rosidl_runtime_rs versions: "
+            f"{detail}.\n"
+            "  Bindings are generated once and shared, so only one can be satisfied; "
+            f"using {chosen}.\n"
+            "  Align the packages' rclrs versions, or pick one explicitly with "
+            "--rosidl-runtime-rs-version.",
+        )
+        return chosen
 
     @staticmethod
     def _cargo_dependency_names(
@@ -775,7 +916,7 @@ class WorkspaceBindingGenerator:
             # Generated structure is: build/<pkg_name>/rosidl_cargo/<pkg_name>/Cargo.toml
             binding_dir = pkg_build_dir / pkg_name
             stamp_file = pkg_build_dir / STAMP_FILENAME
-            stamp = self._interface_stamp(pkg_share)
+            stamp = self._interface_stamp(pkg_share, self._detect_runtime_version())
 
             if binding_dir.exists():
                 # A matching stamp beside a crate that lost its Cargo.toml is not
@@ -833,9 +974,17 @@ class WorkspaceBindingGenerator:
         return "".join(f"{line}\n" for line in lines)
 
     @classmethod
-    def _interface_stamp(cls, pkg_share: Path) -> str:
-        """Digest of a package's interface definitions."""
-        return hashlib.sha256(cls._interface_records(pkg_share).encode()).hexdigest()
+    def _interface_stamp(cls, pkg_share: Path, runtime_version: Optional[str] = None) -> str:
+        """Digest of a package's interface definitions and how they were generated.
+
+        The runtime version is part of it because it lands in the generated
+        Cargo.toml: change it without changing a `.msg`, and a digest over the
+        definitions alone would report the stale crates as up to date.
+        """
+        digest = hashlib.sha256(cls._interface_records(pkg_share).encode())
+        if runtime_version:
+            digest.update(f"rosidl_runtime_rs={runtime_version}\n".encode())
+        return digest.hexdigest()
 
     @classmethod
     def _write_manifest(cls, binding_dir: Path, pkg_share: Path):
@@ -885,8 +1034,9 @@ class WorkspaceBindingGenerator:
             verbose: Enable verbose output
         """
         try:
-            # Extract optional version override from colcon args
-            version = getattr(self.args, "rosidl_runtime_rs_version", None)
+            # The CLI override if given, else whatever the workspace's own
+            # packages imply, else None to leave the generator's default alone.
+            version = self._detect_runtime_version()
 
             # Create configuration for binding generation
             config = cargo_ros2_py.BindgenConfig(

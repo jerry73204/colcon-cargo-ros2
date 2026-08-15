@@ -307,6 +307,41 @@ cannot open shared object file: No such file or directory
 
 **Solution**: source the workspace (`source install/setup.bash`), or rebuild without `--no-rpath` so library directories are baked in.
 
+### `the trait bound ...: MessageIDL is not satisfied`
+
+**Symptoms**:
+
+```
+error[E0277]: the trait bound `std_msgs::msg::String: MessageIDL` is not satisfied
+note: there are multiple different versions of crate `rosidl_runtime_rs`
+      in the dependency graph
+```
+
+**Cause**: two versions of `rosidl_runtime_rs` in one graph. `rclrs` decides which one it needs, and the generated bindings must ask for the same:
+
+| rclrs | rosidl_runtime_rs |
+|---|---|
+| 0.6 | 0.5 |
+| 0.7 | 0.6 |
+
+Cargo treats 0.5 and 0.6 as incompatible, so a mismatch keeps both — and the `Message` trait a generated crate implements is then not the `Message` trait `rclrs` requires, even though both are spelled the same.
+
+`colcon build` derives the version from what your packages declare (`rosidl_runtime_rs` directly, else the `rclrs` version). This error therefore means the workspace disagrees with itself, and the build says so before cargo does:
+
+```
+WARNING Packages in this workspace need different rosidl_runtime_rs versions:
+  0.5 (old_node); 0.6 (new_node).
+  Bindings are generated once and shared, so only one can be satisfied; using 0.6.
+```
+
+**Solution**: align the packages on one `rclrs` version, or pick the runtime explicitly:
+
+```bash
+colcon build --rosidl-runtime-rs-version 0.5
+```
+
+**Related**: `rclrs = "*"` cannot be matched at all, because cargo resolves it to whatever is newest. Pin it.
+
 ### Bindings are out of date
 
 **Symptoms**:

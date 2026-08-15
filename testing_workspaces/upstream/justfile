@@ -26,6 +26,12 @@ fetch:
     mkdir -p src
     git clone --no-checkout {{repo}} src/examples
     git -C src/examples checkout {{ref}}
+    # rust_pubsub declares `rclrs = "*"`, so cargo resolves it to the newest
+    # rclrs while its siblings pin 0.6. The two need different
+    # rosidl_runtime_rs versions, and bindings are generated once per
+    # workspace, so no single build satisfies both. colcon build reports this
+    # by name; excluding the package keeps the rest of the tier meaningful.
+    touch src/examples/rclrs/rust_pubsub/COLCON_IGNORE
 
 # Discard the fetched tree and fetch again
 refetch:
@@ -59,9 +65,18 @@ verify:
         echo "Not built. Run 'just fetch && just build' first." >&2
         exit 1
     fi
-    count=$(find install -maxdepth 1 -mindepth 1 -type d | wc -l)
-    echo "installed packages: $count"
-    [ "$count" -gt 0 ]
+    missing=0
+    for pkg in rclrs_example_msgs examples_rclrs_minimal_pub_sub \
+               examples_rclrs_minimal_client_service examples_rclrs_message_demo \
+               examples_logging_demo examples_parameter_demo examples_worker_demo; do
+        if [ -d "install/$pkg" ]; then
+            echo "  ✓ $pkg"
+        else
+            echo "  ✗ $pkg not installed"
+            missing=1
+        fi
+    done
+    exit $missing
 
 # Clean build artifacts (keeps the fetched sources)
 clean:

@@ -1,37 +1,65 @@
 # upstream
 
 Third-party ROS 2 Rust packages, fetched at a pinned revision and built with
-this toolchain.
+this toolchain, to catch changes in code we do not control.
 
 ```bash
 just fetch          # clone the pinned revision into src/ (git-ignored)
 just install-deps   # rosdep
 just build
+just verify
 ```
 
 The sources are fetched rather than vendored: a submodule would make every clone
 of this repository pay for code it may never build, and would turn upgrades into
-a commit bump rather than a deliberate act.
+a commit bump rather than a deliberate act. The revision is pinned in the
+`justfile` (`ref`) — bump it deliberately.
 
-## Status: not currently a passing tier
+Heavy tier: needs network access and `rosdep`, so it runs under
+`just test-workspaces-heavy`, not on every pull request.
 
-The pinned revision (`e7c18ef`, tip of `main`) does **not** build against the
-bindings this toolchain generates:
+## What these examples exercise
+
+They are written against `rclrs`, which this project does not generate — so they
+test the seam: bindings we generate, consumed by a client library we do not
+control, in code we did not write.
+
+`rclrs` decides which `rosidl_runtime_rs` the graph uses:
+
+| rclrs | rosidl_runtime_rs |
+|---|---|
+| 0.6 | 0.5 |
+| 0.7 | 0.6 |
+
+Generated crates must ask for the same one. Cargo treats 0.5 and 0.6 as
+incompatible, so a mismatch leaves *both* in the graph and every message type
+fails a trait bound it appears to satisfy:
 
 ```
-error[E0599]: no associated function or constant named `into_rmw_message` found
-              for struct `rclrs_example_msgs::msg::VariousTypes`
-error[E0277]: the trait bound `rclrs_example_msgs::msg::rmw::NestedType: SequenceAlloc`
-              is not satisfied
+error[E0277]: the trait bound `std_msgs::msg::String: MessageIDL` is not satisfied
+note: there are multiple different versions of crate `rosidl_runtime_rs`
+      in the dependency graph
 ```
 
-The examples target the ros2-rust generator's API surface, which differs from
-ours. A local commit that updates them (`35e062c`, "update rclrs dependency to
-0.7") exists in one developer's checkout but has never been pushed, so it cannot
-be pinned here.
+`colcon build` now derives the version from what the workspace's own packages
+declare, which is why these examples build unaided. `--rosidl-runtime-rs-version`
+overrides it.
 
-Because of that this workspace is **excluded from `just test-workspaces` and
-`just test-workspaces-heavy`**: a tier that always fails teaches nothing. It is
-kept because the fetch tooling is what makes the comparison reproducible the day
-a compatible revision is published — at which point, bump `ref` in the justfile
-and add it back to the heavy tier.
+## One package is excluded
+
+`rust_pubsub` declares `rclrs = "*"`, so cargo resolves it to the newest rclrs
+while its siblings pin 0.6. Those two need different `rosidl_runtime_rs`
+versions, and bindings are generated once per colcon workspace — no single build
+satisfies both.
+
+`just fetch` writes a `COLCON_IGNORE` into that package. The build reports the
+cause by name before failing:
+
+```
+WARNING rust_pubsub declares rclrs = "*", so cargo resolves it to whatever
+version is newest.
+  Generated bindings cannot be matched to an unbounded requirement; pin a
+  version (e.g. rclrs = "0.7") to have them agree.
+```
+
+Pinning `rclrs` in that package upstream would let it build here too.

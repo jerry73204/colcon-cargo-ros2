@@ -71,10 +71,30 @@ struct ActionRsTemplate {
     actions: Vec<InterfaceInfo>,
 }
 
-/// Default rosidl_runtime_rs version for generated bindings.
+/// Fallback rosidl_runtime_rs version for generated bindings.
 ///
-/// Generated bindings depend on this version from crates.io.
-/// Can be overridden via `--rosidl-runtime-rs-version` CLI flag.
+/// Used only when nothing better is known. The version is not really ours to
+/// choose: it has to match whatever the consumer's `rclrs` depends on, because
+/// cargo treats 0.5 and 0.6 as incompatible and will happily instantiate both,
+/// after which the `Message` trait from one is not the `Message` trait from the
+/// other:
+///
+/// ```text
+/// error[E0277]: the trait bound `std_msgs::msg::String: MessageIDL` is not satisfied
+/// note: there are multiple different versions of crate `rosidl_runtime_rs`
+///       in the dependency graph
+/// ```
+///
+/// | rclrs | rosidl_runtime_rs |
+/// |-------|-------------------|
+/// | 0.6   | 0.5               |
+/// | 0.7   | 0.6               |
+///
+/// A version *range* does not help: cargo picks the greatest match per
+/// incompatible bucket rather than unifying across them. The colcon extension
+/// therefore derives the version from what the workspace's own packages declare
+/// (see `_detect_runtime_version` in `workspace_bindgen.py`) and passes it in;
+/// `--rosidl-runtime-rs-version` overrides both.
 pub const ROSIDL_RUNTIME_RS_VERSION: &str = "0.6";
 
 /// Generated Rust package structure.
@@ -960,9 +980,46 @@ mod tests {
         let cargo_toml = std::fs::read_to_string(temp_dir.path().join("Cargo.toml")).unwrap();
         assert!(cargo_toml.contains("name = \"test_pkg\""));
         assert!(cargo_toml.contains("version = \"0.1.0\""));
-        assert!(cargo_toml.contains("rosidl_runtime_rs = \"0.6\""));
+        assert!(cargo_toml.contains(&format!(
+            "rosidl_runtime_rs = \"{ROSIDL_RUNTIME_RS_VERSION}\""
+        )));
         assert!(cargo_toml.contains("serde"));
         assert!(!cargo_toml.contains("serde-big-array"));
+    }
+
+    /// The fallback is a single version, not a range: cargo resolves a range
+    /// spanning 0.5 and 0.6 to the greatest match rather than unifying with the
+    /// rest of the graph, which is what produced two copies of the runtime and
+    /// a `Message` trait that did not match itself.
+    #[test]
+    fn test_runtime_fallback_is_a_single_version() {
+        let req = semver::VersionReq::parse(ROSIDL_RUNTIME_RS_VERSION)
+            .expect("fallback should parse as a semver requirement");
+        assert!(req.matches(&semver::Version::parse("0.6.0").unwrap()));
+        assert!(
+            !req.matches(&semver::Version::parse("0.5.0").unwrap()),
+            "a fallback matching both majors would let cargo pick either"
+        );
+    }
+
+    /// An explicit override still pins, for a workspace that needs one exact
+    /// version.
+    #[test]
+    fn test_runtime_version_override_is_exact() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let deps = HashSet::new();
+        generate_cargo_toml(
+            temp_dir.path(),
+            "test_pkg",
+            "0.1.0",
+            &deps,
+            false,
+            Some("0.5"),
+        )
+        .unwrap();
+
+        let cargo_toml = std::fs::read_to_string(temp_dir.path().join("Cargo.toml")).unwrap();
+        assert!(cargo_toml.contains("rosidl_runtime_rs = \"0.5\""));
     }
 
     #[test]
@@ -1096,8 +1153,11 @@ mod tests {
         assert!(cargo_toml.contains("version = \"4.5.6\""));
         // Should NOT contain the hardcoded ROSIDL_RUNTIME_RS_VERSION as the package version
         assert!(!cargo_toml.contains("version = \"0.6.0\""));
-        // The rosidl_runtime_rs dep version should be 0.6 (default)
-        assert!(cargo_toml.contains("rosidl_runtime_rs = \"0.6\""));
+        // The rosidl_runtime_rs requirement is the default range, not the
+        // package version.
+        assert!(cargo_toml.contains(&format!(
+            "rosidl_runtime_rs = \"{ROSIDL_RUNTIME_RS_VERSION}\""
+        )));
     }
 
     #[test]

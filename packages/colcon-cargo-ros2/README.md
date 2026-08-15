@@ -259,6 +259,7 @@ The generated `.cargo/config.toml` is what makes this work. It sits at the Cargo
 
 **Key details**:
 - Adding a message dependency means editing **both** `package.xml` (`<depend>`) and `Cargo.toml`, then re-running `colcon build` — cargo alone cannot generate bindings
+- The `rosidl_runtime_rs` version generated crates depend on is derived from your packages: whatever they declare, or the version implied by their `rclrs` (0.6 → 0.5, 0.7 → 0.6). It has to match, or cargo ends up with two incompatible copies. `--rosidl-runtime-rs-version` overrides it
 - A Cargo workspace resolves as a unit, so one member's unresolvable dependency fails its siblings
 - User entries in an existing `.cargo/config.toml` are preserved via comment-based markers
 - The config is added to `.gitignore` automatically (its paths are machine-specific); opt out with `--no-gitignore`

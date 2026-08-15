@@ -211,6 +211,11 @@ test-workspaces-heavy: test-workspaces
          --working-directory testing_workspaces/interfaces build-heavy
     just --justfile testing_workspaces/interfaces/justfile \
          --working-directory testing_workspaces/interfaces verify
+    echo "=== upstream ==="
+    for recipe in fetch build verify; do
+        just --justfile testing_workspaces/upstream/justfile \
+             --working-directory testing_workspaces/upstream "$recipe"
+    done
 
 # Install ROS dependencies for the workspaces that need them
 install-test-deps:

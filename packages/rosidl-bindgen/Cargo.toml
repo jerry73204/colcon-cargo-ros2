@@ -21,4 +21,5 @@ rosidl-codegen.workspace = true
 rosidl-parser.workspace = true
 
 [dev-dependencies]
+semver = "1.0.28"
 tempfile = "3.8"

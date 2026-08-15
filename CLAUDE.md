@@ -427,6 +427,27 @@ Ensures:
 
 ## Recent Architectural Improvements
 
+### rosidl_runtime_rs Version Derived From the Workspace (2026-08-15)
+
+**Problem** (issue #3): generated crates pinned `rosidl_runtime_rs = "0.6"` regardless of what the workspace needed. `rclrs` decides that version — 0.6 requires runtime 0.5, 0.7 requires 0.6 — and cargo treats 0.5 and 0.6 as incompatible, so a mismatch left *both* in the graph. Every message type then failed a trait bound it appeared to satisfy:
+
+```
+error[E0277]: the trait bound `std_msgs::msg::String: MessageIDL` is not satisfied
+note: there are multiple different versions of crate `rosidl_runtime_rs` in the dependency graph
+```
+
+**Solution**: `_detect_runtime_version()` derives it from the workspace's own packages — an explicit `rosidl_runtime_rs` requirement if present, else the version implied by `rclrs` via `RCLRS_RUNTIME_VERSIONS`. Conflicting requirements are reported by package name; `--rosidl-runtime-rs-version` still overrides.
+
+**A version range does not work.** `>=0.5, <0.7` was tried first: cargo resolves it to the greatest match (0.6) rather than unifying with the 0.5 the rest of the graph uses, because 0.x minors are separate compatibility buckets. It has to be the exact version.
+
+**Also**: the freshness stamp now covers the runtime version, or changing it would reuse crates pinned to the old one; `rclrs = "*"` is reported as unmatchable, since cargo resolves it to whatever is newest.
+
+**Result**: `testing_workspaces/upstream` — third-party examples written against rclrs, which this project does not generate — builds 7 of 8 packages unaided. The eighth declares `rclrs = "*"`.
+
+**Files**: `colcon_cargo_ros2/workspace_bindgen.py`, `packages/rosidl-bindgen/src/generator.rs`, `test/test_runtime_version.py`, `testing_workspaces/upstream/`.
+
+---
+
 ### Diagnosable Builds — Phase 8 (2026-08-14)
 
 **Problem**: A missing `[patch.crates-io]` entry is not an error to cargo — it resolves the name on the real crates.io, where ROS message crates exist as yanked uploads. Every such failure was reported as `version 4.2.3 is yanked`, naming a registry the user never asked for.

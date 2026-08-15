@@ -1,0 +1,35 @@
+[package]
+name = "installer_node"
+version = "0.1.0"
+edition = "2021"
+
+# A library artifact alongside the binaries: cdylib output must be installed to
+# install/installer_node/lib/installer_node/ like the executables are.
+[lib]
+name = "installer_node"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "installer_node"
+path = "src/main.rs"
+
+# Built only when its feature is enabled; installing must skip it silently
+# otherwise, rather than reporting a missing artifact.
+[[bin]]
+name = "gated_node"
+path = "src/gated.rs"
+required-features = ["extra"]
+
+[features]
+default = []
+extra = []
+
+[dependencies]
+std_msgs = "*"
+
+[package.metadata.ros]
+# Directories keep their name; individual files keep only their basename.
+install_to_share = ["launch", "config", "README.md"]
+install_to_include = ["include"]
+install_to_lib = ["scripts"]

@@ -140,12 +140,16 @@ just install         # Install updated wheel
 **IMPORTANT**: Always use `just clean && just build` in testing workspaces:
 
 ```bash
-# Testing workspaces with justfiles:
-# - testing_workspaces/my_robot_node/
-# - testing_workspaces/complex_workspace/
-# - testing_workspaces/ros2_rust_examples/
+# Testing workspaces, each with a justfile (build / verify / clean / install-deps):
+# - testing_workspaces/interfaces/   every IDL shape
+# - testing_workspaces/layouts/      every workspace shape
+# - testing_workspaces/scenarios/    the failure modes
+# - testing_workspaces/upstream/     third-party packages (manual)
 
-# Install ROS dependencies first (one-time)
+# From the repository root: build and verify the base tier
+just test-workspaces
+
+# Install ROS dependencies first (only the heavy tier needs any)
 just install-deps
 
 # Build
@@ -172,9 +176,8 @@ just clean-build-tools
 just build-python
 just install
 
-# 3. Test changes in workspace
-cd testing_workspaces/complex_workspace
-just clean && just build
+# 3. Test changes in the workspaces
+just test-workspaces
 
 # 4. Verify results
 ```
@@ -599,7 +602,7 @@ error[E0308]: mismatched types
 - `packages/rosidl-codegen/templates/action_idiomatic.rs.jinja` - Added bounded sequence checks for goal, result, and feedback
 
 **Testing**:
-- Created `testing_workspaces/autoware_msgs_test` to reproduce the issue with `autoware_adapi_v1_msgs::srv::InitializeLocalization`
+- Reproduced with `autoware_adapi_v1_msgs::srv::InitializeLocalization`; the shape (bounded sequences in services and actions) is now covered by `testing_workspaces/interfaces`
 - Verified fix builds successfully with Autoware ADAPI messages
 
 **Impact**: Enables proper handling of bounded sequences in services and actions, fixing compilation errors when using Autoware and other packages with bounded sequence fields.
@@ -818,49 +821,25 @@ cd packages/rosidl-codegen && cargo test
 
 ### Integration Testing Workspaces
 
-**IMPORTANT**: Always use `just` commands for testing workspaces, not direct `colcon build` commands. Each testing workspace has a justfile that handles ROS environment setup and proper build sequencing.
-
-**testing_workspaces/my_robot_node** - Simple single-package workspace:
-
-Demonstrates basic ROS 2 node with standard messages:
+Real colcon workspaces that assert on what the build produced. See
+[testing_workspaces/README.md](testing_workspaces/README.md).
 
 ```bash
-cd testing_workspaces/my_robot_node
-just clean && just build  # Build workspace
-just run                   # Execute test binary
+just test-workspaces        # interfaces + layouts + scenarios (base tier)
+just test-workspaces-heavy  # adds test_msgs / nav2_msgs coverage (needs rosdep)
+just clean-workspaces
 ```
 
-**Coverage**:
-- Single Cargo package with package.xml dependencies
-- Standard messages: std_msgs, geometry_msgs, sensor_msgs
-- Demonstrates dependency-aware binding generation (3-4 packages vs 437)
+| Workspace | Proves |
+|---|---|
+| `interfaces/` | Every IDL shape: primitives and defaults, fixed arrays, bounded/unbounded sequences over every element type, wide strings, constants, nesting, services and actions with bounded sequences, cross-package interface references. `consumer` round-trips values and compares, so a wrong-but-compiling conversion fails |
+| `layouts/` | Every workspace shape: standalone crate, Cargo workspace with disjoint member dependencies, renamed / platform-table / workspace-inherited dependency forms, crate five directories deep, hand-written `.cargo/config.toml`, `[package.metadata.ros]` installs, workspace-local interface package |
+| `scenarios/` | The failure modes: undeclared dependency, stale bindings, wiped `build/`, never built, gutted crate, `--no-rpath`, `--no-gitignore`, env-free build and run, `--cargo-args`, package at the workspace root |
+| `upstream/` | Third-party packages at a pinned revision — currently incompatible, see its README |
 
-**testing_workspaces/complex_workspace** - Comprehensive message type testing:
-
-Demonstrates 50+ message/action types from 17 different ROS 2 packages:
-
-```bash
-cd testing_workspaces/complex_workspace
-just clean && just build  # Build workspace
-just run                   # Execute test binary
-```
-
-**Coverage includes**:
-- **Standard messages** (18 types): std_msgs, builtin_interfaces, geometry_msgs, sensor_msgs
-- **Navigation** (5 types): nav_msgs (Odometry, Path, OccupancyGrid), trajectory_msgs
-- **Control & Diagnostics** (4 types): control_msgs, diagnostic_msgs
-- **Nav2 Actions** (6 types): NavigateToPose, DockRobot (tests capitalized booleans!)
-- **Motion Planning** (3 types): moveit_msgs (RobotState, MotionPlanRequest, PlanningScene)
-- **Action System** (3 types): action_msgs (GoalInfo, GoalStatus, GoalStatusArray)
-- **Custom Interfaces** (6 types): robot_interfaces messages, services, actions
-
-**Key Features Tested**:
-- ✅ Capitalized boolean literals in action files
-- ✅ Action constants in separate namespaces
-- ✅ Complex nested message dependencies
-- ✅ Custom interface packages
-- ✅ Service and action type generation
-- ✅ Workspace-level binding sharing
+**Rules**: assert, do not merely build; anything needing `rosdep` belongs in a
+heavy tier. The previous `complex_workspace` was blocked for months on an
+uninstalled `moveit_msgs` precisely because it ignored the second rule.
 
 ## CI/CD
 
@@ -877,7 +856,7 @@ GitHub Actions workflows:
 **Testing**: Validated with:
 - autoware_carla_bridge (118 packages) ✅
 - cuda_ndt_matcher (16 Autoware + standard packages) ✅
-- complex_workspace (50+ message types from 17 packages) ✅
+- testing_workspaces/interfaces + layouts + scenarios ✅
 
 **Versions**:
 - Rust workspace: v0.2.0 (rosidl-parser, rosidl-codegen, rosidl-bindgen, cargo-ros2), edition 2024

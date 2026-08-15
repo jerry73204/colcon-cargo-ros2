@@ -1,0 +1,14 @@
+[package]
+name = "consumer_heavy"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "consumer_heavy"
+path = "src/main.rs"
+
+[dependencies]
+iface_heavy = "*"
+test_msgs = "*"
+nav2_msgs = "*"
+rosidl_runtime_rs = "0.6"

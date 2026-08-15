@@ -44,6 +44,10 @@ impl From<&{{ message_name }}> for crate::msg::rmw::{{ message_name }} {
     #[allow(unused_variables)]
     fn from(idiomatic: &{{ message_name }}) -> Self {
         Self {
+            {% if fields.is_empty() %}
+            // The C placeholder member for a message with no fields.
+            structure_needs_at_least_one_member: 0,
+            {% endif %}
             {% for field in fields %}
             {% match field.kind %}
             {% when FieldKind::Primitive %}

@@ -75,3 +75,42 @@ jobs:
 
       - name: Run pytest
         run: pytest packages/colcon-cargo-ros2/test/ -v
+
+  workspaces:
+    name: Testing Workspaces (base tier)
+    runs-on: ubuntu-latest
+    # Everything the base tier needs ships in this image: no rosdep, no network
+    # access to third-party interface packages.
+    container: ros:humble-ros-base
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-workspaces-cargo-${{ hashFiles('packages/Cargo.lock') }}
+
+      - name: Build and install wheel
+        run: |
+          pip install maturin
+          cd packages/colcon-cargo-ros2
+          maturin build --release --out dist
+          pip install dist/*.whl
+
+      # interfaces: every IDL shape, asserted at runtime by its consumers.
+      # layouts:    every workspace shape, asserted against the generated config.
+      # scenarios:  the failure modes, asserted against the messages they produce.
+      - name: Build and verify the workspaces
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          just test-workspaces

@@ -1,0 +1,20 @@
+[package]
+name = "gamma"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "gamma"
+path = "src/main.rs"
+
+[dependencies]
+# Renamed: the key is `msgs`, the ROS package is sensor_msgs. Patches are keyed
+# by the real name, so only a reader that follows `package = ...` sees this.
+msgs = { package = "sensor_msgs", version = "*" }
+# Inherited from the Cargo workspace root's [workspace.dependencies].
+diagnostic_msgs = { workspace = true }
+rosidl_runtime_rs = { workspace = true }
+
+# Platform table: a whole set of dependencies that lives outside [dependencies].
+[target.'cfg(unix)'.dependencies]
+nav_msgs = "*"

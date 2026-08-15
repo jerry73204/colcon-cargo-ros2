@@ -1,0 +1,5 @@
+# Fetched by `just fetch` at a pinned revision, never vendored.
+src/
+build/
+install/
+log/

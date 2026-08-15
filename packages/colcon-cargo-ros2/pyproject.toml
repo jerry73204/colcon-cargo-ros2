@@ -55,6 +55,11 @@ Documentation = "https://github.com/jerry73204/colcon-cargo-ros2#readme"
 Issues = "https://github.com/jerry73204/colcon-cargo-ros2/issues"
 Changelog = "https://github.com/jerry73204/colcon-cargo-ros2/releases"
 
+[project.scripts]
+# The wheel ships no binaries, so this is how an installed user reaches the
+# same diagnosis `cargo ros2 doctor` gives when built from source.
+colcon-cargo-ros2-doctor = "colcon_cargo_ros2.doctor:main"
+
 [project.entry-points."colcon_core.package_augmentation"]
 "ros.ament_cargo" = "colcon_cargo_ros2.package_augmentation:RustBindingAugmentation"
 

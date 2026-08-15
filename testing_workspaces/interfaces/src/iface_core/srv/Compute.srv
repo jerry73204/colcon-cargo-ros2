@@ -1,0 +1,14 @@
+# Bounded sequences on both sides of a service.
+#
+# The idiomatic-to-RMW conversion for a bounded sequence differs from an
+# unbounded one (BoundedSequence::try_from, not Sequence::from). The service and
+# action templates once got this wrong while the message template had it right,
+# so both directions are exercised here.
+
+geometry_msgs/Point[<=2] waypoints
+string<=16 label
+Collections collections
+---
+bool success
+geometry_msgs/Point[<=2] resolved
+string[<=3] notes

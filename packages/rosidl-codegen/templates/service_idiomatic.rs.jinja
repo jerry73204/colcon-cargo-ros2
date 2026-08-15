@@ -132,6 +132,10 @@ pub mod request {
         #[allow(unused_variables)]
         fn from(idiomatic: {{ service_name }}_Request) -> Self {
             Self {
+                {% if request_fields.is_empty() %}
+                // The C placeholder member for a section with no fields.
+                structure_needs_at_least_one_member: 0,
+                {% endif %}
                 {% for field in request_fields %}
                 {% match field.kind %}
                 {% when FieldKind::Primitive %}
@@ -378,6 +382,10 @@ pub mod response {
         #[allow(unused_variables)]
         fn from(idiomatic: {{ service_name }}_Response) -> Self {
             Self {
+                {% if response_fields.is_empty() %}
+                // The C placeholder member for a section with no fields.
+                structure_needs_at_least_one_member: 0,
+                {% endif %}
                 {% for field in response_fields %}
                 {% match field.kind %}
                 {% when FieldKind::Primitive %}

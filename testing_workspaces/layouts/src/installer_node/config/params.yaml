@@ -1,0 +1,4 @@
+installer_node:
+  ros__parameters:
+    rate_hz: 10
+    frame_id: base_link

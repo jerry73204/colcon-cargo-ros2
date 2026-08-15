@@ -532,6 +532,50 @@ mod tests {
         assert!(pkg.message_rmw.contains("match_"));
     }
 
+    /// A message with no fields still occupies a byte in C.
+    ///
+    /// `rosidl_generator_c` emits `uint8_t structure_needs_at_least_one_member`
+    /// for such messages -- `std_msgs/Empty`, and any constants-only message.
+    /// Generating an empty Rust struct instead makes the RMW type zero-sized,
+    /// so every field *after* one inside another message reads from the wrong
+    /// offset. That is a silent memory error: `test_msgs/Arrays`, which embeds
+    /// `Constants[3]`, segfaults on conversion.
+    #[test]
+    fn test_fieldless_message_matches_c_layout() {
+        let msg = parse_message("int32 MAX=5\n").unwrap();
+        assert!(msg.fields.is_empty(), "fixture should have no fields");
+        let deps = HashSet::new();
+
+        let pkg = generate_message_package("test_msgs", "Constants", &msg, &deps).unwrap();
+
+        assert!(
+            pkg.message_rmw
+                .contains("pub structure_needs_at_least_one_member: u8"),
+            "RMW struct must carry the C placeholder member:\n{}",
+            pkg.message_rmw
+        );
+        assert!(
+            pkg.message_idiomatic
+                .contains("structure_needs_at_least_one_member: 0"),
+            "conversion into the RMW type must initialise the placeholder:\n{}",
+            pkg.message_idiomatic
+        );
+    }
+
+    #[test]
+    fn test_message_with_fields_has_no_placeholder() {
+        let msg = parse_message("int32 x\n").unwrap();
+        let deps = HashSet::new();
+
+        let pkg = generate_message_package("test_msgs", "Point", &msg, &deps).unwrap();
+
+        assert!(
+            !pkg.message_rmw
+                .contains("structure_needs_at_least_one_member"),
+            "a message with fields must not carry the placeholder"
+        );
+    }
+
     #[test]
     fn test_simple_service_generation() {
         let srv = parse_service("int32 a\nint32 b\n---\nint32 sum\n").unwrap();

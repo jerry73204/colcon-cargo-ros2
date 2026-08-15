@@ -1,0 +1,18 @@
+# The user-authored config for this package.
+#
+# `just build` copies this to .cargo/config.toml before building, if that file
+# does not exist yet. It is kept as a template rather than committed in place so
+# that nothing generated is ever tracked -- .cargo/config.toml carries absolute
+# paths after a build.
+#
+# Everything here must survive `colcon build`: the generated patch, build-flag
+# and environment blocks are merged in between their own markers, and the
+# target-dir below stays authoritative.
+[build]
+target-dir = "cargo-target-of-my-own"
+
+[alias]
+preset-check = "check --all-targets"
+
+[env]
+PRESET_CONFIG_MARKER = "kept"

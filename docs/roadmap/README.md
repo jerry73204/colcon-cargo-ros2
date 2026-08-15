@@ -27,6 +27,7 @@
 | Phase 7: cargo-ament-build Parity     | ✅ Complete      | 7/7 subphases        | [View](../phases/007-cargo-ament-build-parity.md) |
 | Phase 8: Diagnosable Builds           | ✅ Complete      | 7/7 subphases        | [View](../phases/008-build-diagnostics.md) |
 | Phase 9: Manual `cargo` Workflow      | ✅ Complete      | 6/6 subphases        | [View](../phases/009-manual-cargo-workflow.md) |
+| Phase 10: Testing Workspaces          | ✅ Complete      | 7/7 subphases        | [View](../phases/010-testing-workspaces.md) |
 
 **Latest Achievement**: Phase 5 complete! 🎉 Full OMG IDL 4.2 support with lexer, parser, code generation, constant modules, @default annotations, and enums. Fixed constant module parsing order and RMW type path resolution. All 194 tests passing (100%)!
 

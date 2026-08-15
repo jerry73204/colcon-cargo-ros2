@@ -38,6 +38,12 @@ pub struct {{ service_name }}Request {
     {% for field in request_fields %}
     pub {{ field.name }}: {{ field.rust_type }},
     {% endfor %}
+    {% if request_fields.is_empty() %}
+    /// Matches the `uint8_t structure_needs_at_least_one_member` that
+    /// rosidl_generator_c emits for a section with no fields; without it the
+    /// struct would be zero-sized and mismatch the C layout.
+    pub structure_needs_at_least_one_member: u8,
+    {% endif %}
 }
 
 impl {{ service_name }}Request {
@@ -115,6 +121,12 @@ pub struct {{ service_name }}Response {
     {% for field in response_fields %}
     pub {{ field.name }}: {{ field.rust_type }},
     {% endfor %}
+    {% if response_fields.is_empty() %}
+    /// Matches the `uint8_t structure_needs_at_least_one_member` that
+    /// rosidl_generator_c emits for a section with no fields; without it the
+    /// struct would be zero-sized and mismatch the C layout.
+    pub structure_needs_at_least_one_member: u8,
+    {% endif %}
 }
 
 impl {{ service_name }}Response {

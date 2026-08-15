@@ -1,0 +1,5 @@
+iface_core/Nested subject
+---
+bool ok
+string summary
+iface_core/Constants[<=1] snapshot

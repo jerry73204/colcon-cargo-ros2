@@ -84,6 +84,31 @@ class TestLibrarySearchDirs:
 
         assert sorted(d.parent.name for d in dirs) == ["my_msgs", "other_msgs"]
 
+    def test_ignores_workspace_prefixes_on_ament_prefix_path(self, tmp_path, monkeypatch):
+        """Sourcing install/setup.bash must not widen the next build's config.
+
+        The workspace's own prefixes land on AMENT_PREFIX_PATH once it has been
+        sourced, and taking them there would bypass the per-target narrowing --
+        so a second build would produce a different config than the first.
+        """
+        _lib_dir(tmp_path, "my_msgs")
+        _lib_dir(tmp_path, "other_msgs")
+        ros = tmp_path / "opt" / "ros" / "humble"
+        (ros / "lib").mkdir(parents=True)
+        (ros / "lib" / "librcl.so").write_text("elf")
+        monkeypatch.setenv(
+            "AMENT_PREFIX_PATH",
+            f"{tmp_path / 'install' / 'other_msgs'}:{ros}",
+        )
+        gen = _make_generator(tmp_path)
+
+        dirs = gen._library_search_dirs({"my_msgs"})
+
+        assert [str(d) for d in dirs] == [
+            str(tmp_path / "install" / "my_msgs" / "lib"),
+            str(ros / "lib"),
+        ]
+
     def test_includes_ament_prefix_path(self, tmp_path, monkeypatch):
         ros = tmp_path / "opt" / "ros" / "humble"
         (ros / "lib").mkdir(parents=True)

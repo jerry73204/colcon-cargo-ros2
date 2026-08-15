@@ -1,0 +1,11 @@
+[package]
+name = "preset_config"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "preset_config"
+path = "src/main.rs"
+
+[dependencies]
+geometry_msgs = "*"

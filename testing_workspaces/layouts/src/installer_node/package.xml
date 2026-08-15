@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>installer_node</name>
+  <version>0.1.0</version>
+  <description>Exercises the installer: [package.metadata.ros] entries covering directories and individual files, a library artifact, and a binary gated behind a feature.</description>
+  <maintainer email="jerry73204@gmail.com">Lin Hsiang-Jui</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>std_msgs</depend>
+
+  <export>
+    <build_type>ament_cargo</build_type>
+  </export>
+</package>

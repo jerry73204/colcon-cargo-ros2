@@ -1,0 +1,12 @@
+# One Cargo workspace holding three ROS packages. All three share a single
+# .cargo/config.toml at this directory, whose patch list is the union of what
+# the members declare -- and nothing else in the colcon workspace.
+[workspace]
+resolver = "2"
+members = ["alpha", "beta", "gamma"]
+
+# Inherited by gamma as `diagnostic_msgs = { workspace = true }`, one of the
+# dependency forms a naive scan of [dependencies] keys cannot resolve.
+[workspace.dependencies]
+diagnostic_msgs = "*"
+rosidl_runtime_rs = "0.6"

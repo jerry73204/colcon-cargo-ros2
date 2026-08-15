@@ -1,0 +1,71 @@
+# upstream: third-party ROS 2 Rust packages, built with this toolchain.
+#
+# The sources are fetched rather than vendored: a submodule would make every
+# clone of this repository pay for code it may never build, and pin upgrades to
+# a commit bump rather than a deliberate act. Heavy tier — not part of
+# `just test-workspaces`.
+
+ros_distro := env_var_or_default("ROS_DISTRO", "humble")
+
+# Pinned so a fetch is reproducible. Bump deliberately.
+repo := "https://github.com/jerry73204/ros2_rust_examples.git"
+ref := "e7c18ef"  # tip of main at the time of pinning
+
+# List all available recipes (default)
+default:
+    @just --list
+
+# Clone the pinned revision into src/ (ignored by git)
+fetch:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    if [ -d src/examples/.git ]; then
+        echo "Already fetched; run 'just refetch' to move to {{ref}}."
+        exit 0
+    fi
+    mkdir -p src
+    git clone --no-checkout {{repo}} src/examples
+    git -C src/examples checkout {{ref}}
+
+# Discard the fetched tree and fetch again
+refetch:
+    rm -rf src/examples
+    @just fetch
+
+# Install ROS dependencies via rosdep
+install-deps:
+    rosdep update
+    rosdep install --from-paths src --ignore-src -r -y
+
+# Build whatever was fetched
+build *ARGS:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    if [ ! -d src/examples ]; then
+        echo "Nothing fetched yet. Run 'just fetch' first." >&2
+        exit 1
+    fi
+    source /opt/ros/{{ros_distro}}/setup.bash
+    if [ -f install/setup.bash ]; then
+        source install/setup.bash
+    fi
+    colcon build {{ARGS}}
+
+# Assert the fetched packages built
+verify:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    if [ ! -d install ]; then
+        echo "Not built. Run 'just fetch && just build' first." >&2
+        exit 1
+    fi
+    count=$(find install -maxdepth 1 -mindepth 1 -type d | wc -l)
+    echo "installed packages: $count"
+    [ "$count" -gt 0 ]
+
+# Clean build artifacts (keeps the fetched sources)
+clean:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    rm -rf build install log
+    find src -type d \( -name target -o -name .cargo \) -prune -exec rm -rf {} + 2>/dev/null || true

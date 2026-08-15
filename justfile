@@ -183,17 +183,53 @@ check:
     just check-python
 
 # === TESTING WORKSPACE COMMANDS ===
+#
+# Base tier needs nothing beyond a stock ROS install; heavy tier needs rosdep.
+# Each workspace exposes the same recipes: build, verify, clean, install-deps.
 
-# Install ROS dependencies for all testing workspaces
+# Build and verify the base tier: interfaces, layouts, and the scenario harness
+test-workspaces:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    for ws in interfaces layouts; do
+        echo "=== $ws ==="
+        just --justfile "testing_workspaces/$ws/justfile" \
+             --working-directory "testing_workspaces/$ws" build
+        just --justfile "testing_workspaces/$ws/justfile" \
+             --working-directory "testing_workspaces/$ws" verify
+    done
+    echo "=== scenarios ==="
+    just --justfile testing_workspaces/scenarios/justfile \
+         --working-directory testing_workspaces/scenarios run
+
+# Base tier plus the packages that need third-party interfaces
+test-workspaces-heavy: test-workspaces
+    #!/usr/bin/env bash
+    set -eo pipefail
+    echo "=== interfaces (heavy) ==="
+    just --justfile testing_workspaces/interfaces/justfile \
+         --working-directory testing_workspaces/interfaces build-heavy
+    just --justfile testing_workspaces/interfaces/justfile \
+         --working-directory testing_workspaces/interfaces verify
+
+# Install ROS dependencies for the workspaces that need them
 install-test-deps:
     #!/usr/bin/env bash
     set -e
     rosdep update
-    for ws in testing_workspaces/my_robot_node \
-              testing_workspaces/complex_workspace \
-              testing_workspaces/ros2_rust_examples; do
+    for ws in interfaces layouts; do
         echo "Installing deps for $ws..."
-        just -f "$ws/justfile" install-deps
+        just --justfile "testing_workspaces/$ws/justfile" \
+             --working-directory "testing_workspaces/$ws" install-deps
+    done
+
+# Remove every testing workspace's build artifacts
+clean-workspaces:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    for ws in interfaces layouts scenarios upstream; do
+        just --justfile "testing_workspaces/$ws/justfile" \
+             --working-directory "testing_workspaces/$ws" clean
     done
 
 # === QUALITY COMMANDS ===

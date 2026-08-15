@@ -1,0 +1,12 @@
+[package]
+name = "nested_node"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "nested_node"
+path = "src/main.rs"
+
+[dependencies]
+local_msgs = "*"
+rosidl_runtime_rs = "0.6"

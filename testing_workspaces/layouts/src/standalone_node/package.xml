@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>standalone_node</name>
+  <version>0.1.0</version>
+  <description>A crate that is not part of any Cargo workspace: its .cargo/config.toml belongs at the crate root, and must be patched with std_msgs and nothing else.</description>
+  <maintainer email="jerry73204@gmail.com">Lin Hsiang-Jui</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>std_msgs</depend>
+
+  <export>
+    <build_type>ament_cargo</build_type>
+  </export>
+</package>

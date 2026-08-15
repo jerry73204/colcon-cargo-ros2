@@ -1,0 +1,24 @@
+# scenarios: deliberately broken states, and the messages they must produce.
+#
+# Every scenario copies ../layouts into .work/, breaks one thing, and asserts on
+# what comes out. The committed tree is never mutated, so a failed run leaves
+# nothing to clean up but .work/.
+
+# List all available recipes (default)
+default:
+    @just --list
+
+# Run every scenario (a few minutes: most need their own colcon build)
+run *NAMES:
+    @./run.sh {{NAMES}}
+
+# Alias for the harness convention used by the other workspaces
+verify: run
+
+# List the scenarios without running them
+list:
+    @grep -oP '^scenario_\K\w+' run.sh
+
+# Remove the scratch workspaces and logs
+clean:
+    rm -rf .work

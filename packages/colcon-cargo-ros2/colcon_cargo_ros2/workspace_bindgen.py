@@ -1348,9 +1348,21 @@ class WorkspaceBindingGenerator:
                 if lib_dir.is_dir() and self._has_library_files(lib_dir):
                     dirs.append(lib_dir.absolute())
 
+        install_base = self.install_base.resolve()
         for prefix in os.environ.get("AMENT_PREFIX_PATH", "").split(":"):
             if not prefix:
                 continue
+            # Skip this workspace's own prefixes. They arrive here only when the
+            # user happened to source install/setup.bash before rebuilding, and
+            # taking them would silently widen the search path on the second
+            # build -- the generated config must not depend on whether the
+            # workspace was sourced. The narrowed selection above already covers
+            # them.
+            try:
+                Path(prefix).resolve().relative_to(install_base)
+                continue
+            except ValueError:
+                pass
             lib_dir = Path(prefix) / "lib"
             if lib_dir.is_dir() and self._has_library_files(lib_dir):
                 lib_dir = lib_dir.absolute()

@@ -1,89 +1,75 @@
 # Testing Workspaces
 
-This directory contains various test workspaces for cargo-ros2 development.
-
-## Workspaces
-
-### 1. `minimal_path_test/`
-**Purpose**: Minimal reproduction case for Rust module path resolution issue
-
-**Status**: ✅ **SOLUTION FOUND**
-
-**Key Finding**: Nested inline modules create virtual directory contexts. Files referenced via `#[path]` in nested inline modules must be in subdirectories matching the module hierarchy.
-
-**Solution Applied**:
-- RMW files go in `src/msg/rmw/`, `src/srv/rmw/`, `src/action/rmw/`
-- Idiomatic files stay in `src/msg/`, `src/srv/`, `src/action/`
-- Path attributes use simple filenames: `#[path = "bool_rmw.rs"]` (not `../bool_rmw.rs`)
-
-**Result**: ✅ Fix successfully applied to cargo-ros2-bindgen generator
-
----
-
-### 2. `complex_workspace/`
-**Purpose**: Full integration test with colcon, custom interfaces, and cargo-ros2
-
-**Contains**:
-- `robot_interfaces` (ament_cmake) - Custom messages, services, actions
-- `robot_controller` (ament_cargo) - Rust node using standard + custom ROS types
-- justfile for workspace automation
-
-**Status**: ✅ **PATH RESOLUTION FIX VERIFIED**
-- Directory structure fix applied and working correctly
-- RMW files now in proper `rmw/` subdirectories
-- Path attributes corrected (simple filenames, no `../`)
-- Build progresses past file resolution stage
-
-**Known Issues**: Code generation problems (separate from path resolution):
-- Missing cross-package dependencies in generated Cargo.toml
-- Missing `use crate::rosidl_runtime_rs;` imports in generated code
-- Trait method mismatches in generated trait implementations
-
-**Build Command**:
-```bash
-cd complex_workspace
-just build  # or: colcon build --symlink-install
-```
-
----
-
-## Progress Summary
-
-### ✅ Completed
-1. Fallback dependency parser for yanked crates
-2. colcon-ros-cargo plugin integration
-3. Workspace isolation markers
-4. Root cause analysis of module path issue
-5. **PATH RESOLUTION FIX IMPLEMENTED & TESTED**:
-   - Updated `write_generated_package()` to create `msg/rmw/` subdirectory
-   - Updated `write_generated_service()` to create `srv/rmw/` subdirectory
-   - Updated `write_generated_action()` to create `action/rmw/` subdirectory
-   - Fixed `generate_lib_rs()` to use simple filenames in path attributes
-   - Verified on both `minimal_path_test` and `complex_workspace`
-
-### 🔧 In Progress
-- Fix code generation issues (cross-package dependencies, imports, traits)
-
-### 📋 TODO
-- Add cross-package dependencies to generated Cargo.toml files
-- Fix missing `use crate::rosidl_runtime_rs;` imports in generated code
-- Investigate trait method mismatches
-- Complete end-to-end test once code generation is fixed
-
----
-
-## Quick Test Commands
+Real colcon workspaces that exercise this toolchain end to end. The unit suites
+cover the pieces; these cover the assembled product — and assert on it, so a
+regression fails a command instead of needing someone to read build output.
 
 ```bash
-# Test minimal case (path resolution only)
-cd minimal_path_test && cargo build
-
-# Test complex workspace (path resolution works, code generation has issues)
-cd complex_workspace && just build
-
-# Verify directory structure
-tree complex_workspace/src/robot_controller/target/ros2_bindings/std_msgs/src/msg/
-
-# Check lib.rs path attributes
-head -50 complex_workspace/src/robot_controller/target/ros2_bindings/std_msgs/src/lib.rs
+just test-workspaces        # from the repository root: base tier
+just test-workspaces-heavy  # adds the third-party interface packages
+just clean-workspaces
 ```
+
+Every workspace exposes the same recipes: `build`, `verify`, `clean`,
+`install-deps`.
+
+## The workspaces
+
+| Directory | What it proves | Tier |
+|---|---|---|
+| [`interfaces/`](interfaces/) | Every IDL shape the generator has to handle, asserted at runtime by its consumers | base (+ heavy) |
+| [`layouts/`](layouts/) | Every workspace shape a user can present: standalone crate, Cargo workspace, deeply nested crate, hand-written config, installer metadata, workspace-local messages | base |
+| [`scenarios/`](scenarios/) | The failure modes, and the messages each must produce | base |
+| [`upstream/`](upstream/) | Third-party ROS 2 Rust packages at a pinned revision | manual — see its README |
+
+### interfaces
+
+`iface_core` defines the shapes itself — primitives with defaults, fixed arrays,
+bounded and unbounded sequences over every element type, wide strings, constants,
+nesting, services and actions with bounded sequences on every side — rather than
+borrowing them from third-party packages, so the base tier builds on a stock ROS
+install. `iface_deps` references `iface_core`'s types, and `consumer` round-trips
+every value through the RMW representation and compares. A codegen bug that
+produces compiling-but-wrong conversions fails there, not in a review.
+
+The `heavy/` subdirectory adds `test_msgs` and `nav2_msgs` shapes and needs
+`rosdep`. It lives outside `src/`, so the base tier never sees it.
+
+### layouts
+
+Eight packages, each a shape the config generator has to get right. `verify.sh`
+asserts on the generated `.cargo/config.toml` itself: that `standalone_node` is
+patched with exactly `std_msgs` and `builtin_interfaces` and not with its
+neighbours' dependencies, that `preset_config`'s hand-written entries and its own
+`target-dir` survive, that a crate five directories down resolves upward, that
+binaries carry an RPATH covering workspace-local libraries, and that nothing
+generated lands in the source tree.
+
+### scenarios
+
+Each scenario copies `layouts/`, breaks one thing, runs one command, and greps
+for what should come out — for instance that a missing `<depend>` tag is named,
+with the tag to add, *before* cargo's own "version 4.2.3 is yanked". Nothing
+mutates the committed tree; scratch copies live in `.work/`.
+
+```bash
+cd scenarios
+just list          # the scenarios
+just run           # all of them (a few minutes: most need their own build)
+just run stale_bindings no_rpath
+```
+
+## Adding coverage
+
+Prefer extending a workspace over adding one. A new workspace has to justify
+itself with a class of failure the existing ones cannot express; a new package,
+message or scenario usually does not.
+
+Two rules keep these useful:
+
+- **Assert, do not merely build.** A build that succeeds proves very little: it
+  cannot catch too-broad patches, a trampled user config, or a conversion that
+  compiles and corrupts.
+- **Keep the base tier installable-free.** Anything that needs `rosdep` belongs
+  in a heavy tier, or it will be skipped and rot — as the previous
+  `complex_workspace` did, blocked for months on an uninstalled `moveit_msgs`.

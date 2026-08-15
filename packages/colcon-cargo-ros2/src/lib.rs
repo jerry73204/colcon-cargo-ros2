@@ -215,6 +215,34 @@ fn clean_bindings(project_root: String, verbose: bool) -> PyResult<()> {
     Ok(())
 }
 
+/// Diagnose why a plain `cargo` invocation fails in a workspace
+///
+/// Runs the same checks as `cargo ros2 doctor`, printing a checklist and the fix
+/// for the first thing that is wrong. Exposed here because the wheel ships this
+/// extension module and no binaries, so this is how an installed user reaches
+/// the diagnosis.
+///
+/// Args:
+///     crate_dir: Directory of the crate to diagnose (default: current directory)
+///
+/// Returns:
+///     True when every check passed
+///
+/// Example:
+///     >>> import cargo_ros2_py
+///     >>> cargo_ros2_py.doctor()
+#[pyfunction]
+#[pyo3(signature = (crate_dir = None))]
+fn doctor(crate_dir: Option<String>) -> PyResult<bool> {
+    let dir = match crate_dir {
+        Some(path) => PathBuf::from(path),
+        None => std::env::current_dir()
+            .map_err(|e| PyRuntimeError::new_err(format!("Cannot read current directory: {e}")))?,
+    };
+    cargo_ros2::doctor::run(&dir)
+        .map_err(|e| PyRuntimeError::new_err(format!("Doctor failed: {:#}", e)))
+}
+
 /// Python module for cargo-ros2
 ///
 /// This module provides Python bindings to the cargo-ros2 library,
@@ -229,6 +257,7 @@ fn cargo_ros2_py(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate_bindings, m)?)?;
     m.add_function(wrap_pyfunction!(install_to_ament, m)?)?;
     m.add_function(wrap_pyfunction!(clean_bindings, m)?)?;
+    m.add_function(wrap_pyfunction!(doctor, m)?)?;
 
     // Module metadata
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

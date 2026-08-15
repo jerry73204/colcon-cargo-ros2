@@ -49,6 +49,12 @@ pub struct {{ action_name }}Goal {
     {% for field in goal_fields %}
     pub {{ field.name }}: {{ field.rust_type }},
     {% endfor %}
+    {% if goal_fields.is_empty() %}
+    /// Matches the `uint8_t structure_needs_at_least_one_member` that
+    /// rosidl_generator_c emits for a section with no fields; without it the
+    /// struct would be zero-sized and mismatch the C layout.
+    pub structure_needs_at_least_one_member: u8,
+    {% endif %}
 }
 
 impl {{ action_name }}Goal {
@@ -126,6 +132,12 @@ pub struct {{ action_name }}Result {
     {% for field in result_fields %}
     pub {{ field.name }}: {{ field.rust_type }},
     {% endfor %}
+    {% if result_fields.is_empty() %}
+    /// Matches the `uint8_t structure_needs_at_least_one_member` that
+    /// rosidl_generator_c emits for a section with no fields; without it the
+    /// struct would be zero-sized and mismatch the C layout.
+    pub structure_needs_at_least_one_member: u8,
+    {% endif %}
 }
 
 impl {{ action_name }}Result {
@@ -203,6 +215,12 @@ pub struct {{ action_name }}Feedback {
     {% for field in feedback_fields %}
     pub {{ field.name }}: {{ field.rust_type }},
     {% endfor %}
+    {% if feedback_fields.is_empty() %}
+    /// Matches the `uint8_t structure_needs_at_least_one_member` that
+    /// rosidl_generator_c emits for a section with no fields; without it the
+    /// struct would be zero-sized and mismatch the C layout.
+    pub structure_needs_at_least_one_member: u8,
+    {% endif %}
 }
 
 impl {{ action_name }}Feedback {

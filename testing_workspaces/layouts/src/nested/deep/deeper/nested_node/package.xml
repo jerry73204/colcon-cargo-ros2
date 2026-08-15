@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>nested_node</name>
+  <version>0.1.0</version>
+  <description>Sits several directories below src/ and consumes a workspace-local interface package, so its config must carry relative patch paths that climb out and a -L entry pointing into install/local_msgs/lib.</description>
+  <maintainer email="jerry73204@gmail.com">Lin Hsiang-Jui</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>local_msgs</depend>
+
+  <export>
+    <build_type>ament_cargo</build_type>
+  </export>
+</package>

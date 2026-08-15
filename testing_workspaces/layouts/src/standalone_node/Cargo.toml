@@ -1,0 +1,16 @@
+# Deliberately carries no [workspace] table: this is the "standalone crate that
+# is not a workspace root" case, where the config target is the crate directory
+# itself. The colcon workspace root above excludes src/, so cargo does not try
+# to make this a member of anything.
+[package]
+name = "standalone_node"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "standalone_node"
+path = "src/main.rs"
+
+[dependencies]
+std_msgs = "*"
+rosidl_runtime_rs = "0.6"

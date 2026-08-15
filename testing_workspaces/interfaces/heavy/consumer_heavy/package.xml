@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>consumer_heavy</name>
+  <version>0.1.0</version>
+  <description>Consumes the third-party-derived definitions in iface_heavy. Kept out of src/ because its dependencies are not in a stock ROS install.</description>
+  <maintainer email="jerry73204@gmail.com">Lin Hsiang-Jui</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>iface_heavy</depend>
+  <depend>test_msgs</depend>
+  <depend>nav2_msgs</depend>
+
+  <export>
+    <build_type>ament_cargo</build_type>
+  </export>
+</package>

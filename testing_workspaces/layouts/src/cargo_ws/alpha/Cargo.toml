@@ -1,0 +1,12 @@
+[package]
+name = "alpha"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "alpha"
+path = "src/main.rs"
+
+[dependencies]
+std_msgs = "*"
+rosidl_runtime_rs = { workspace = true }

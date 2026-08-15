@@ -106,6 +106,10 @@ pub mod goal {
         #[allow(unused_variables)]
         fn from(idiomatic: {{ action_name }}Goal) -> Self {
             Self {
+                {% if goal_fields.is_empty() %}
+                // The C placeholder member for a section with no fields.
+                structure_needs_at_least_one_member: 0,
+                {% endif %}
                 {% for field in goal_fields %}
                 {% match field.kind %}
                 {% when FieldKind::Primitive %}
@@ -296,6 +300,10 @@ pub mod result {
         #[allow(unused_variables)]
         fn from(idiomatic: {{ action_name }}Result) -> Self {
             Self {
+                {% if result_fields.is_empty() %}
+                // The C placeholder member for a section with no fields.
+                structure_needs_at_least_one_member: 0,
+                {% endif %}
                 {% for field in result_fields %}
                 {% match field.kind %}
                 {% when FieldKind::Primitive %}
@@ -485,6 +493,10 @@ pub mod feedback {
         #[allow(unused_variables)]
         fn from(idiomatic: {{ action_name }}Feedback) -> Self {
             Self {
+                {% if feedback_fields.is_empty() %}
+                // The C placeholder member for a section with no fields.
+                structure_needs_at_least_one_member: 0,
+                {% endif %}
                 {% for field in feedback_fields %}
                 {% match field.kind %}
                 {% when FieldKind::Primitive %}

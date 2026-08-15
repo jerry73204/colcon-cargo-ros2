@@ -1,0 +1,64 @@
+# layouts: every workspace shape a user can present, in one colcon workspace.
+#
+# This workspace must always build clean. Deliberately broken states live in
+# ../scenarios, which copies this tree and mutates it.
+
+ros_distro := env_var_or_default("ROS_DISTRO", "humble")
+
+# List all available recipes (default)
+default:
+    @just --list
+
+# Install ROS dependencies via rosdep
+install-deps:
+    rosdep update
+    rosdep install --from-paths src --ignore-src -r -y
+
+# Put preset_config's hand-written config in place (kept as a template so that
+# no generated file is ever tracked)
+prepare:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p src/preset_config/.cargo
+    if [ ! -f src/preset_config/.cargo/config.toml ]; then
+        cp src/preset_config/preset.config.toml src/preset_config/.cargo/config.toml
+    fi
+
+# Build the workspace
+build *ARGS: prepare
+    #!/usr/bin/env bash
+    set -eo pipefail
+    # ROS setup scripts read unset variables; -u has to stay off around them.
+    source /opt/ros/{{ros_distro}}/setup.bash
+    if [ -f install/setup.bash ]; then
+        source install/setup.bash
+    fi
+    colcon build {{ARGS}}
+
+# Remove everything the build produced, including generated cargo configs
+clean:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rm -rf build install log
+    find src -type d \( -name target -o -name .cargo -o -name cargo-target-of-my-own \) \
+        -prune -exec rm -rf {} +
+
+# Run every installed binary; each asserts on its own values
+run:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    source install/setup.bash
+    for pkg in standalone_node alpha beta gamma nested_node preset_config installer_node; do
+        ros2 run "$pkg" "$pkg"
+    done
+
+# Assert on what the build produced, not just that it succeeded
+verify:
+    @./verify.sh
+
+# Build, then verify
+check: build verify
+
+# Show the packages colcon discovers here
+info:
+    @colcon list --base-paths src

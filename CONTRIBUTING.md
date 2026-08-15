@@ -198,10 +198,13 @@ just install             # Install wheel with all tools
 ### Testing Changes in a Workspace
 
 ```bash
-# After making changes and rebuilding
-cd testing_workspaces/complex_workspace
-rm -rf build/ros2_bindings build/.colcon src/*/.cargo/config.toml
-colcon build --symlink-install
+# After making changes and rebuilding the wheel
+just test-workspaces          # base tier: builds and asserts
+just clean-workspaces         # start over
+
+# Or drive one workspace directly
+cd testing_workspaces/layouts
+just clean && just build && just verify
 ```
 
 ## Testing

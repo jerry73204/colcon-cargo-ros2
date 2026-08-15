@@ -1,0 +1,22 @@
+[package]
+name = "consumer"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "consumer"
+path = "src/main.rs"
+
+[dependencies]
+iface_core = "*"
+iface_deps = "*"
+std_msgs = "*"
+geometry_msgs = "*"
+sensor_msgs = "*"
+nav_msgs = "*"
+trajectory_msgs = "*"
+diagnostic_msgs = "*"
+action_msgs = "*"
+builtin_interfaces = "*"
+example_interfaces = "*"
+rosidl_runtime_rs = "0.6"

@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>consumer</name>
+  <version>0.1.0</version>
+  <description>Constructs and asserts on every shape iface_core and iface_deps define, plus the interface packages a stock ROS install ships. Compiling is not the test; the assertions are.</description>
+  <maintainer email="jerry73204@gmail.com">Lin Hsiang-Jui</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>iface_core</depend>
+  <depend>iface_deps</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>trajectory_msgs</depend>
+  <depend>diagnostic_msgs</depend>
+  <depend>action_msgs</depend>
+  <depend>builtin_interfaces</depend>
+  <depend>example_interfaces</depend>
+
+  <export>
+    <build_type>ament_cargo</build_type>
+  </export>
+</package>

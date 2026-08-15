@@ -33,6 +33,13 @@ pub struct {{ message_name }} {
     {% for field in fields %}
     pub {{ field.name }}: {{ field.rust_type }},
     {% endfor %}
+    {% if fields.is_empty() %}
+    /// Matches the `uint8_t structure_needs_at_least_one_member` that
+    /// rosidl_generator_c emits for a message with no fields. Without it this
+    /// struct would be zero-sized, and every field following one inside another
+    /// message would read from the wrong offset.
+    pub structure_needs_at_least_one_member: u8,
+    {% endif %}
 }
 
 impl {{ message_name }} {

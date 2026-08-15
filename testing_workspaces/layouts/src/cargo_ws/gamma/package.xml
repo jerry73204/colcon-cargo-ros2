@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>gamma</name>
+  <version>0.1.0</version>
+  <description>Declares its ROS dependencies in the three Cargo.toml forms a naive scan of dependency keys cannot resolve: a rename, a platform table, and workspace inheritance. All three must be recognised, and none may produce a mismatch warning.</description>
+  <maintainer email="jerry73204@gmail.com">Lin Hsiang-Jui</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>diagnostic_msgs</depend>
+
+  <export>
+    <build_type>ament_cargo</build_type>
+  </export>
+</package>

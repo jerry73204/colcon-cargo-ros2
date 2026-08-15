@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>preset_config</name>
+  <version>0.1.0</version>
+  <description>Ships its own .cargo/config.toml, with entries of its own and a target-dir it chose. The generated blocks must merge in without touching either.</description>
+  <maintainer email="jerry73204@gmail.com">Lin Hsiang-Jui</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>geometry_msgs</depend>
+
+  <export>
+    <build_type>ament_cargo</build_type>
+  </export>
+</package>

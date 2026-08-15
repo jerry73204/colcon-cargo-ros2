@@ -1,0 +1,12 @@
+[package]
+name = "beta"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "beta"
+path = "src/main.rs"
+
+[dependencies]
+geometry_msgs = "*"
+rosidl_runtime_rs = { workspace = true }

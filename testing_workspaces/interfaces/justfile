@@ -1,0 +1,63 @@
+# interfaces: every IDL shape the generator has to handle.
+#
+# Base tier (src/) needs nothing beyond a stock ROS install. Heavy tier (heavy/)
+# borrows definitions from third-party interface packages and needs rosdep.
+
+ros_distro := env_var_or_default("ROS_DISTRO", "humble")
+
+# List all available recipes (default)
+default:
+    @just --list
+
+# Install ROS dependencies via rosdep (only the heavy tier needs any)
+install-deps:
+    rosdep update
+    rosdep install --from-paths src heavy --ignore-src -r -y
+
+# Build the base tier
+build *ARGS:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    source /opt/ros/{{ros_distro}}/setup.bash
+    if [ -f install/setup.bash ]; then
+        source install/setup.bash
+    fi
+    colcon build --base-paths src {{ARGS}}
+
+# Build the base tier plus the packages that need third-party interfaces
+build-heavy *ARGS:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    source /opt/ros/{{ros_distro}}/setup.bash
+    if [ -f install/setup.bash ]; then
+        source install/setup.bash
+    fi
+    colcon build --base-paths src heavy {{ARGS}}
+
+# Clean build artifacts
+clean:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    rm -rf build install log
+    find src heavy -type d \( -name target -o -name .cargo \) -prune -exec rm -rf {} +
+
+# Run the assertions compiled into each consumer
+run:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    source install/setup.bash
+    ros2 run consumer consumer
+    if [ -d install/consumer_heavy ]; then
+        ros2 run consumer_heavy consumer_heavy
+    fi
+
+# Assert on what the build produced
+verify:
+    @./verify.sh
+
+# Build, then verify
+check: build verify
+
+# Show the packages colcon discovers here
+info:
+    @colcon list --base-paths src heavy

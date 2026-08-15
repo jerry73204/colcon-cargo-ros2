@@ -99,6 +99,24 @@ def _cargo_package(tmp_path: Path, name: str, cargo_deps, xml_deps):
     return desc
 
 
+def _cargo_package_raw(tmp_path: Path, name: str, dependencies: str, xml_deps, extra: str = ""):
+    """Like :func:`_cargo_package`, with the ``[dependencies]`` body written out.
+
+    Path and git dependencies cannot be expressed as ``name = "*"``.
+    """
+    crate = tmp_path / "src" / name
+    crate.mkdir(parents=True, exist_ok=True)
+    (crate / "Cargo.toml").write_text(
+        f'[package]\nname = "{name}"\nversion = "0.1.0"\n\n[dependencies]\n{dependencies}\n{extra}'
+    )
+
+    desc = MagicMock()
+    desc.name = name
+    desc.path = str(crate)
+    desc.get_dependencies.return_value = [_dep(d) for d in xml_deps]
+    return desc
+
+
 def _interface_share(tmp_path: Path, name: str) -> Path:
     """Create a share/ directory that looks like an installed interface package."""
     share = tmp_path / "opt" / name
@@ -296,3 +314,124 @@ class TestLooksLikeInterfacePackage:
         monkeypatch.setattr(workspace_bindgen, "_package_share_directory", lambda name: None)
         gen = _make_generator(tmp_path)
         assert gen._looks_like_interface_package("my_msgs") is True
+
+
+# ---------------------------------------------------------------------------
+# Interface deps cargo will not take from the generated bindings
+# ---------------------------------------------------------------------------
+
+
+class TestPathSourcedInterfaceDependency:
+    """`[patch.crates-io]` cannot redirect a path or git dependency.
+
+    A package can declare `<depend>std_msgs</depend>`, get bindings generated for
+    it, and still resolve the name somewhere else entirely. Cargo then reports a
+    missing file in a directory the user never typed -- upstream
+    safe_drive_tutorial hardcodes `/tmp/safe_drive_tutorial/...` -- with nothing
+    tying it to this extension. See issue #11.
+    """
+
+    def test_warns_when_an_interface_dep_is_a_path_dependency(
+        self, tmp_path, monkeypatch, warnings_log
+    ):
+        desc = _cargo_package_raw(
+            tmp_path,
+            "my_talker",
+            'safe_drive = "0.3"\nstd_msgs = { path = "/tmp/elsewhere/std_msgs" }',
+            xml_deps=["std_msgs"],
+        )
+        _validate(
+            tmp_path,
+            {"my_talker": desc},
+            {"std_msgs": tmp_path / "share" / "std_msgs"},
+            monkeypatch,
+        )
+
+        text = "\n".join(warnings_log)
+        assert "std_msgs" in text
+        assert "/tmp/elsewhere/std_msgs" in text
+        assert 'std_msgs = "*"' in text, "the fix has to be in the message"
+        assert "safe_drive" not in text, "an ordinary path-less dep is not the subject"
+
+    def test_warns_for_a_git_dependency_too(self, tmp_path, monkeypatch, warnings_log):
+        desc = _cargo_package_raw(
+            tmp_path,
+            "pkg",
+            'std_msgs = { git = "https://example.invalid/msgs.git" }',
+            xml_deps=["std_msgs"],
+        )
+        _validate(tmp_path, {"pkg": desc}, {"std_msgs": tmp_path / "s"}, monkeypatch)
+
+        text = "\n".join(warnings_log)
+        assert "std_msgs" in text
+        assert "https://example.invalid/msgs.git" in text
+
+    def test_undeclared_interface_package_with_a_path_is_still_caught(
+        self, tmp_path, monkeypatch, warnings_log
+    ):
+        """Not declared *and* path-sourced: both are worth saying."""
+        desc = _cargo_package_raw(
+            tmp_path,
+            "pkg",
+            'sensor_msgs = { path = "../vendor/sensor_msgs" }',
+            xml_deps=[],
+        )
+        _validate(
+            tmp_path,
+            {"pkg": desc},
+            {},
+            monkeypatch,
+            known_interfaces={"sensor_msgs"},
+        )
+
+        text = "\n".join(warnings_log)
+        assert "<depend>sensor_msgs</depend>" in text
+        assert "../vendor/sensor_msgs" in text
+
+    def test_no_warning_for_a_path_dependency_on_an_ordinary_crate(
+        self, tmp_path, monkeypatch, warnings_log
+    ):
+        desc = _cargo_package_raw(
+            tmp_path,
+            "pkg",
+            'std_msgs = "*"\nmy_helpers = { path = "../my_helpers" }',
+            xml_deps=["std_msgs"],
+        )
+        _validate(tmp_path, {"pkg": desc}, {"std_msgs": tmp_path / "s"}, monkeypatch)
+
+        assert not warnings_log, warnings_log
+
+    def test_no_warning_when_the_path_is_the_generated_crate(
+        self, tmp_path, monkeypatch, warnings_log
+    ):
+        """Pointing straight at our own output is unusual but not wrong."""
+        generated = tmp_path / "build" / "std_msgs" / "rosidl_cargo" / "std_msgs"
+        generated.mkdir(parents=True)
+        desc = _cargo_package_raw(
+            tmp_path,
+            "pkg",
+            f'std_msgs = {{ path = "{generated}" }}',
+            xml_deps=["std_msgs"],
+        )
+        _validate(tmp_path, {"pkg": desc}, {"std_msgs": tmp_path / "s"}, monkeypatch)
+
+        assert not warnings_log, warnings_log
+
+    def test_workspace_inherited_path_dependency_is_caught(
+        self, tmp_path, monkeypatch, warnings_log
+    ):
+        """`workspace = true` hides the path one manifest up."""
+        (tmp_path / "src").mkdir(exist_ok=True)
+        (tmp_path / "src" / "Cargo.toml").write_text(
+            '[workspace]\nmembers = ["pkg"]\n\n'
+            "[workspace.dependencies]\n"
+            'std_msgs = { path = "/tmp/elsewhere/std_msgs" }\n'
+        )
+        desc = _cargo_package_raw(
+            tmp_path, "pkg", "std_msgs = { workspace = true }", xml_deps=["std_msgs"]
+        )
+        _validate(tmp_path, {"pkg": desc}, {"std_msgs": tmp_path / "s"}, monkeypatch)
+
+        text = "\n".join(warnings_log)
+        assert "std_msgs" in text
+        assert "/tmp/elsewhere/std_msgs" in text

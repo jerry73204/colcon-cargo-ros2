@@ -435,6 +435,44 @@ Differing comments do not help; the values have to differ. Verified on Humble.
 
 **Not a limitation of this project**: the generated Rust keeps constants in a module per section, so duplicate names are fine once rosidl can produce the interface at all. `testing_workspaces/interfaces` covers that.
 
+### `failed to read .../Cargo.toml` for a message package
+
+**Symptoms**: cargo cannot find a manifest in a directory you never named,
+often one under `/tmp` or another user's home:
+
+```
+error: failed to read `/tmp/safe_drive_tutorial/pubsub/std_msgs/Cargo.toml`
+
+Caused by:
+  No such file or directory (os error 2)
+```
+
+**Cause**: the dependency carries its own source:
+
+```toml
+std_msgs = { path = "/tmp/safe_drive_tutorial/pubsub/std_msgs" }
+```
+
+`[patch.crates-io]` redirects registry dependencies only, so cargo takes this
+one from the path and never reads the crate generated under `build/`. It is
+common in packages written for another Rust ROS client library, which generate
+their messages with their own tool and hardcode where it put them.
+
+**Solution**: let the generated bindings supply it:
+
+```toml
+std_msgs = "*"
+```
+
+The build warns about this before cargo runs, and
+`colcon-cargo-ros2-doctor` reports it under `Dependency sources`.
+
+Note that dropping the path is not always enough on its own: bindings generated
+here implement `rosidl_runtime_rs` traits for `rclrs`, so a package built
+against a different client library also needs its node code ported.
+
+---
+
 ### Bindings are out of date
 
 **Symptoms**:

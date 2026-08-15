@@ -121,6 +121,11 @@ pub fn diagnose_with_prefixes(crate_dir: &Path, prefixes: &[PathBuf]) -> Vec<Che
         return checks;
     }
 
+    // Before asking whether the patched crates are any good, ask whether cargo
+    // will read them at all. A dependency with its own source makes every later
+    // check true and irrelevant at the same time.
+    checks.push(check_dependency_sources(crate_dir, &patches, prefixes));
+
     checks.push(check_bindings_fresh(&patches));
     checks.push(check_declared_dependencies(crate_dir, &patches, prefixes));
 
@@ -343,6 +348,104 @@ fn fnv1a64(data: &[u8]) -> String {
 /// package is by definition unpatched -- so unknown dependency names are also
 /// resolved against the ament index, where an interface package has
 /// `share/<name>/msg|srv|action`.
+/// Interface packages the manifest resolves from its own `path` or `git` source.
+///
+/// `[patch.crates-io]` redirects registry dependencies only. A dependency
+/// carrying its own source is taken from there, the generated crate is never
+/// read, and cargo reports whatever is at that source -- for upstream
+/// safe_drive_tutorial, a `/tmp` directory belonging to the machine that ran a
+/// different generator.
+fn check_dependency_sources(
+    crate_dir: &Path,
+    patches: &BTreeMap<String, PathBuf>,
+    prefixes: &[PathBuf],
+) -> Check {
+    let cargo_toml = crate_dir.join("Cargo.toml");
+    let bypassed: Vec<(String, String)> = dependency_sources(&cargo_toml)
+        .into_iter()
+        .filter(|(name, source)| {
+            if !(patches.contains_key(name) || is_interface_package(name, prefixes)) {
+                return false;
+            }
+            // Pointing straight at the crate the patch names is equivalent, and
+            // saying so would ask for a rewrite that changes nothing.
+            match patches.get(name) {
+                Some(target) => !resolves_to(crate_dir, source, target),
+                None => true,
+            }
+        })
+        .collect();
+
+    if bypassed.is_empty() {
+        return Check::pass(
+            "Dependency sources",
+            "interface crates come from the patches",
+        );
+    }
+
+    let detail = bypassed
+        .iter()
+        .map(|(name, source)| format!("{name} is taken from {source}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let fix = bypassed
+        .iter()
+        .map(|(name, _)| format!("  {name} = \"*\""))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    Check::fail(
+        "Dependency sources",
+        format!("{detail}, so the generated bindings are unused"),
+        format!("Drop the source key in Cargo.toml so the patch applies:\n{fix}"),
+    )
+}
+
+/// True when *source*, read from a manifest in *base*, names *target*.
+fn resolves_to(base: &Path, source: &str, target: &Path) -> bool {
+    let candidate = Path::new(source);
+    let candidate = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        base.join(candidate)
+    };
+    match (candidate.canonicalize(), target.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => candidate == target,
+    }
+}
+
+/// Package name -> the `path` or `git` value it is resolved from.
+fn dependency_sources(cargo_toml: &Path) -> Vec<(String, String)> {
+    let mut sources = Vec::new();
+
+    let Ok(text) = std::fs::read_to_string(cargo_toml) else {
+        return sources;
+    };
+    let Ok(value) = text.parse::<toml::Value>() else {
+        return sources;
+    };
+
+    for table in dependency_tables(&value) {
+        for (key, spec) in table {
+            let Some(spec) = spec.as_table() else {
+                continue;
+            };
+            let name = spec
+                .get("package")
+                .and_then(toml::Value::as_str)
+                .unwrap_or(key);
+            for kind in ["path", "git"] {
+                if let Some(source) = spec.get(kind).and_then(toml::Value::as_str) {
+                    sources.push((name.to_string(), source.to_string()));
+                    break;
+                }
+            }
+        }
+    }
+    sources
+}
+
 fn check_declared_dependencies(
     crate_dir: &Path,
     patches: &BTreeMap<String, PathBuf>,
@@ -404,6 +507,20 @@ fn cargo_dependency_names(cargo_toml: &Path) -> BTreeSet<String> {
         return names;
     };
 
+    for table in dependency_tables(&value) {
+        for (key, spec) in table {
+            let name = spec
+                .get("package")
+                .and_then(toml::Value::as_str)
+                .unwrap_or(key);
+            names.insert(name.to_string());
+        }
+    }
+    names
+}
+
+/// Every dependency table in a manifest, including the `[target.*]` ones.
+fn dependency_tables(value: &toml::Value) -> Vec<&toml::value::Table> {
     let kinds = ["dependencies", "build-dependencies", "dev-dependencies"];
     let mut tables: Vec<&toml::value::Table> = Vec::new();
     for kind in kinds {
@@ -420,17 +537,7 @@ fn cargo_dependency_names(cargo_toml: &Path) -> BTreeSet<String> {
             }
         }
     }
-
-    for table in tables {
-        for (key, spec) in table {
-            let name = spec
-                .get("package")
-                .and_then(toml::Value::as_str)
-                .unwrap_or(key);
-            names.insert(name.to_string());
-        }
-    }
-    names
+    tables
 }
 
 /// Package names from `<depend>`-family tags, without pulling in an XML parser.
@@ -744,5 +851,121 @@ mod tests {
             manifest_state(&tmp.path().join(MANIFEST_FILENAME)),
             ManifestState::Unknown
         ));
+    }
+
+    /// `[patch.crates-io]` only redirects registry dependencies, so a patched
+    /// name with its own source is resolved from that source and the generated
+    /// crate is never read. Every other check still passes, which is how
+    /// safe_drive_tutorial reached "Workspace looks healthy" while failing to
+    /// build. See issue #11.
+    #[test]
+    fn a_path_dependency_on_a_patched_package_is_not_healthy() {
+        let (_tmp, crate_dir) = workspace(true);
+        write(
+            &crate_dir.join("Cargo.toml"),
+            "[package]\nname = \"pkg_a\"\n\n[dependencies]\n\
+             safe_drive = \"0.3\"\n\
+             std_msgs = { path = \"/tmp/elsewhere/std_msgs\" }\n",
+        );
+
+        let checks = diagnose_with_prefixes(&crate_dir, &[ros_prefix()]);
+
+        let sources = check(&checks, "Dependency sources");
+        assert!(!sources.ok, "{checks:#?}");
+        assert!(sources.detail.contains("std_msgs"), "{sources:#?}");
+        assert!(
+            sources.detail.contains("/tmp/elsewhere/std_msgs"),
+            "the source has to be named: {sources:#?}"
+        );
+        assert!(
+            sources
+                .fix
+                .as_deref()
+                .unwrap_or_default()
+                .contains("std_msgs = \"*\""),
+            "{sources:#?}"
+        );
+        assert!(
+            !sources.detail.contains("safe_drive"),
+            "an ordinary path-less dependency is not the subject: {sources:#?}"
+        );
+    }
+
+    #[test]
+    fn a_git_dependency_on_a_patched_package_is_reported_too() {
+        let (_tmp, crate_dir) = workspace(true);
+        write(
+            &crate_dir.join("Cargo.toml"),
+            "[package]\nname = \"pkg_a\"\n\n[dependencies]\n\
+             std_msgs = { git = \"https://example.invalid/msgs.git\" }\n",
+        );
+
+        let checks = diagnose_with_prefixes(&crate_dir, &[ros_prefix()]);
+
+        let sources = check(&checks, "Dependency sources");
+        assert!(!sources.ok, "{checks:#?}");
+        assert!(
+            sources.detail.contains("https://example.invalid/msgs.git"),
+            "{sources:#?}"
+        );
+    }
+
+    #[test]
+    fn a_path_dependency_on_an_ordinary_crate_is_fine() {
+        let (_tmp, crate_dir) = workspace(true);
+        write(
+            &crate_dir.join("Cargo.toml"),
+            "[package]\nname = \"pkg_a\"\n\n[dependencies]\n\
+             std_msgs = \"*\"\n\
+             my_helpers = { path = \"../my_helpers\" }\n",
+        );
+
+        let checks = diagnose_with_prefixes(&crate_dir, &[ros_prefix()]);
+
+        assert!(checks.iter().all(|c| c.ok), "{checks:#?}");
+    }
+
+    /// Pointing straight at the crate the patch names is unusual but equivalent,
+    /// and telling someone to replace a working setup with the same thing is
+    /// noise.
+    #[test]
+    fn a_path_dependency_on_the_generated_crate_itself_is_fine() {
+        let (tmp, crate_dir) = workspace(true);
+        let generated = tmp.path().join("build/std_msgs/rosidl_cargo/std_msgs");
+        write(
+            &crate_dir.join("Cargo.toml"),
+            &format!(
+                "[package]\nname = \"pkg_a\"\n\n[dependencies]\nstd_msgs = {{ path = \"{}\" }}\n",
+                generated.display()
+            ),
+        );
+
+        let checks = diagnose_with_prefixes(&crate_dir, &[ros_prefix()]);
+
+        assert!(checks.iter().all(|c| c.ok), "{checks:#?}");
+    }
+
+    /// An interface package resolved by path that is not patched either -- both
+    /// the missing declaration and the bypassed bindings are worth saying.
+    #[test]
+    fn an_unpatched_interface_package_with_a_path_is_still_caught() {
+        let (tmp, crate_dir) = workspace(true);
+        let share = tmp.path().join("opt/share/sensor_msgs/msg");
+        fs::create_dir_all(&share).unwrap();
+        write(&share.join("Thing.msg"), "int32 value\n");
+        write(
+            &crate_dir.join("Cargo.toml"),
+            "[package]\nname = \"pkg_a\"\n\n[dependencies]\n\
+             std_msgs = \"*\"\n\
+             sensor_msgs = { path = \"../vendor/sensor_msgs\" }\n",
+        );
+
+        let checks = diagnose_with_prefixes(&crate_dir, &[tmp.path().join("opt")]);
+
+        assert!(!check(&checks, "Dependency sources").ok, "{checks:#?}");
+        assert!(
+            !check(&checks, "package.xml declarations").ok,
+            "{checks:#?}"
+        );
     }
 }

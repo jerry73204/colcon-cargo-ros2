@@ -164,6 +164,30 @@ cargo_bare() {
 # Scenarios
 # ---------------------------------------------------------------------------
 
+# An interface package resolved from a path instead of the registry.
+# `[patch.crates-io]` cannot redirect it, so the generated crate goes unread and
+# cargo reports a missing manifest in a directory belonging to some other
+# machine -- how upstream safe_drive_tutorial fails, with nothing naming the
+# cause. Issue #11.
+scenario_path_sourced_dep() {
+    local dir
+    dir=$(fresh path_sourced_dep)
+    sed -i 's|^geometry_msgs = "\*"|geometry_msgs = { path = "/nonexistent/geometry_msgs" }|' \
+        "$dir/src/cargo_ws/beta/Cargo.toml"
+
+    build "$dir" --packages-select beta
+    expect_contains "$(log_for build)" "geometry_msgs is taken from /nonexistent/geometry_msgs" \
+        "the source that shadows the bindings is named"
+    expect_contains "$(log_for build)" 'geometry_msgs = "*"' \
+        "the fix is spelled out"
+    expect_before "$(log_for build)" "is taken from" "failed to read" \
+        "the diagnosis precedes cargo's missing-manifest error"
+
+    doctor "$dir" src/cargo_ws/beta
+    expect_contains "$(log_for doctor)" "✗ Dependency sources" \
+        "doctor does not call this workspace healthy"
+}
+
 # An interface package used in Cargo.toml with no <depend> tag in package.xml.
 # Bindings come from package.xml alone, so cargo resolves the name on crates.io
 # and reports a yanked version -- naming a registry, never the missing tag.
@@ -498,6 +522,7 @@ scenario_package_at_workspace_root() {
 ALL_SCENARIOS=(
     undeclared_dep
     undeclared_dep_renamed
+    path_sourced_dep
     never_built
     doctor_healthy
     stale_bindings

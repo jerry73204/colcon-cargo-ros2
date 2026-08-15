@@ -23,8 +23,14 @@ each change is in the commit that made it and in `docs/phases/`.
   `install`, `clean`, `doctor` — were previously unavailable to anyone who
   installed from PyPI.
 - **`cargo ros2 doctor`**: walks the ROS environment, the generated config, the
-  patched crate directories, binding freshness and `package.xml` declarations,
-  and prints the fix for the first thing that is wrong.
+  patched crate directories, dependency sources, binding freshness and
+  `package.xml` declarations, and prints the fix for the first thing that is
+  wrong.
+- **An interface package resolved from a `path` or `git` source is now named.**
+  `[patch.crates-io]` cannot redirect one, so the generated crate goes unread
+  and cargo reports a missing manifest in a directory from whichever machine ran
+  a different generator. The build warns before cargo runs and `doctor` fails its
+  `Dependency sources` check.
 - **Diagnostics for the failures cargo misattributes.** An interface package used
   in `Cargo.toml` but missing from `package.xml` is now named, with the
   `<depend>` tag to add, before cargo reports a "yanked" version against

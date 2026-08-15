@@ -85,6 +85,7 @@ colcon-cargo-ros2-doctor          # or: colcon-cargo-ros2 doctor [path]
 ✓ Generated .cargo/config.toml: found at /ws/src/pkg_b/.cargo/config.toml
 ✓ Patch section: generated markers present
 ✓ Patched crates: 4 generated crates readable
+✓ Dependency sources: interface crates come from the patches
 ✓ Binding freshness: 4 crates match their interface definitions
 ✗ package.xml declarations: used in Cargo.toml but not declared: sensor_msgs
     Add to package.xml, then re-run `colcon build`:

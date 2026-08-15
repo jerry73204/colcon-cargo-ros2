@@ -637,6 +637,66 @@ class WorkspaceBindingGenerator:
                 names.add(resolve(key, spec))
         return names
 
+    @staticmethod
+    def _locally_sourced_dependencies(
+        cargo_toml_path: Path, cargo_workspace_root: Optional[Path] = None
+    ) -> Dict[str, str]:
+        """Package name -> the ``path``/``git`` source it is taken from.
+
+        ``[patch.crates-io]`` only redirects registry dependencies. A dependency
+        with its own source is resolved from there and the generated crate is
+        never consulted, so an interface package pinned this way silently
+        bypasses every binding this extension produces.
+
+        Args:
+            cargo_toml_path: Manifest to read.
+            cargo_workspace_root: Directory holding the Cargo workspace manifest,
+                needed only to resolve ``workspace = true`` entries.
+        """
+        data = _read_toml(cargo_toml_path)
+        if not data:
+            return {}
+
+        inherited: Dict[str, object] = {}
+        if cargo_workspace_root is not None:
+            root_manifest = cargo_workspace_root / "Cargo.toml"
+            root_data = data if root_manifest == cargo_toml_path else _read_toml(root_manifest)
+            workspace_table = root_data.get("workspace", {})
+            if isinstance(workspace_table, dict):
+                inherited = workspace_table.get("dependencies", {}) or {}
+
+        sources: Dict[str, str] = {}
+        for table in _dependency_tables(data):
+            for key, spec in table.items():
+                if not isinstance(spec, dict):
+                    continue
+                if spec.get("workspace") is True:
+                    parent = inherited.get(key)
+                    spec = parent if isinstance(parent, dict) else {}
+                name = spec.get("package", key)
+                for kind in ("path", "git"):
+                    value = spec.get(kind)
+                    if isinstance(value, str):
+                        sources[name] = value
+                        break
+        return sources
+
+    @staticmethod
+    def _resolves_to(base: Path, source: str, target: Path) -> bool:
+        """True when *source*, read from a manifest in *base*, is *target*.
+
+        Pointing a path dependency straight at the generated crate is unusual but
+        not wrong, and warning about it would be telling the user to replace a
+        working setup with an equivalent one.
+        """
+        try:
+            candidate = Path(source)
+            if not candidate.is_absolute():
+                candidate = base / candidate
+            return candidate.resolve() == target.resolve()
+        except OSError:
+            return False
+
     def _validate_cargo_dependencies(self, interface_packages: Dict[str, Path]):
         """Validate that Cargo.toml dependencies match package.xml interface packages.
 
@@ -715,6 +775,33 @@ class WorkspaceBindingGenerator:
                         "  No bindings are generated for them, so cargo will look them up "
                         "on crates.io and fail with an unrelated version or 'yanked' error.\n"
                         f"  Add to {pkg_name}/package.xml:\n{tags}",
+                    )
+
+                # An interface package cargo will not take from the bindings at
+                # all, because the manifest gives it its own source. The failure
+                # this produces names a directory the user never typed --
+                # upstream safe_drive_tutorial hardcodes /tmp paths from whatever
+                # machine generated its messages -- and nothing in cargo's error
+                # points back here.
+                sourced = self._locally_sourced_dependencies(
+                    cargo_toml_path,
+                    self._detect_cargo_workspace_root(pkg_path, self.workspace_root),
+                )
+                for dep, source in sorted(sourced.items()):
+                    if not (dep in interface_packages or self._looks_like_interface_package(dep)):
+                        continue
+                    generated = self.build_base / dep / "rosidl_cargo" / dep
+                    if self._resolves_to(cargo_toml_path.parent, source, generated):
+                        continue
+                    _warn_once(
+                        f"{pkg_name}:locally-sourced:{dep}",
+                        f"{pkg_name}: {dep} is taken from {source}, not from the "
+                        "generated bindings.\n"
+                        "  [patch.crates-io] cannot redirect a path or git dependency, so "
+                        f"the crate generated at {generated} is unused and cargo reports "
+                        "whatever is (or is not) at that source.\n"
+                        f"  In {pkg_name}/Cargo.toml, drop the source key:\n"
+                        f'    {dep} = "*"',
                     )
 
             except Exception as e:

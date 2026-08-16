@@ -224,7 +224,11 @@ test-workspaces-heavy: test-workspaces
     just --justfile testing_workspaces/interfaces/justfile \
          --working-directory testing_workspaces/interfaces verify
     echo "=== upstream ==="
-    for recipe in fetch build verify; do
+    # install-deps, not just fetch/build/verify: the examples pull interface
+    # packages that no other tier needs -- example_interfaces among them -- and
+    # `just install-test-deps` covers only interfaces and layouts, so nothing
+    # else installs them. It has to follow fetch: rosdep reads the sources.
+    for recipe in fetch install-deps build verify; do
         just --justfile testing_workspaces/upstream/justfile \
              --working-directory testing_workspaces/upstream "$recipe"
     done

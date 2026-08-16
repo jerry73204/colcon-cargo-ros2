@@ -99,20 +99,30 @@ def test_build_and_test_package():
             build_base = Path(task.context.args.build_base)
 
             # Cargo nests artifacts under the triple when one is in play, and
-            # `$CARGO_BUILD_TARGET` is enough to put one in play -- which is how
-            # this assertion failed on the release workflow and nowhere else:
-            # maturin-action exports that variable, and every later step in the
-            # job inherits it. Ask the same helper the build task asks, so the
-            # test looks where the product would.
+            # `$CARGO_BUILD_TARGET` is enough to put one in play. Ask the same
+            # helper the build task asks, so the test looks where the product
+            # would.
             triple = detect_cargo_target(None)
             artifacts = build_base / triple / "debug" if triple else build_base / "debug"
+            assert artifacts.is_dir(), f"cargo wrote nothing to {artifacts}"
 
-            # Make sure the testing files are built
-            assert (artifacts / "deps").is_dir(), (
-                f"no deps directory under {artifacts}; build base holds "
-                f"{sorted(str(p.relative_to(build_base)) for p in build_base.rglob('*'))[:40]}"
+            # Assert that something got compiled, not where cargo filed it.
+            # Older cargo puts test binaries in `debug/deps`; newer cargo splits
+            # intermediates out and they land in
+            # `debug/build/<pkg>/<hash>/out/`. Asserting on `deps` passed
+            # locally for years and failed on the release runner, which had the
+            # newer layout -- a detail of cargo's that this test never meant to
+            # pin down.
+            stems = ("rust_sample_package", "rust-sample-package")
+            built = [
+                path
+                for path in artifacts.rglob("*")
+                if path.is_file() and path.name.startswith(stems)
+            ]
+            assert built, (
+                f"nothing built under {artifacts}; it holds "
+                f"{sorted(str(p.relative_to(artifacts)) for p in artifacts.rglob('*'))[:40]}"
             )
-            assert len(os.listdir(artifacts / "deps")) > 0
             # TODO: XML test result generation is not currently implemented
             # result_file_path = build_base / 'cargo_test.xml'
             # assert result_file_path.is_file()

@@ -116,6 +116,19 @@ jobs:
             ~/.cargo/git
           key: ${{ runner.os }}-workspaces-cargo-${{ hashFiles('packages/Cargo.lock') }}
 
+      # ros:humble-ros-base carries no pip at all -- not the command, not the
+      # module. Its Python packages come from apt, which is how ROS expects to
+      # be assembled: 23 python3-colcon-* including common-extensions, empy
+      # 3.3.4, lark, all in /usr/lib/python3/dist-packages. Installing pip from
+      # apt keeps that arrangement intact -- pip then sees the apt colcon and
+      # empy as already satisfying the wheel's requirements and replaces
+      # neither. Verified in the image: empy stays 3.3.4 from dist-packages and
+      # `colcon build --packages-select` still parses.
+      - name: Install pip
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends python3-pip
+
       - name: Build and install wheel
         run: |
           pip install maturin
@@ -160,6 +173,19 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: ${{ runner.os }}-workspaces-heavy-cargo-${{ hashFiles('packages/Cargo.lock') }}
+
+      # ros:humble-ros-base carries no pip at all -- not the command, not the
+      # module. Its Python packages come from apt, which is how ROS expects to
+      # be assembled: 23 python3-colcon-* including common-extensions, empy
+      # 3.3.4, lark, all in /usr/lib/python3/dist-packages. Installing pip from
+      # apt keeps that arrangement intact -- pip then sees the apt colcon and
+      # empy as already satisfying the wheel's requirements and replaces
+      # neither. Verified in the image: empy stays 3.3.4 from dist-packages and
+      # `colcon build --packages-select` still parses.
+      - name: Install pip
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends python3-pip
 
       - name: Build and install wheel
         run: |

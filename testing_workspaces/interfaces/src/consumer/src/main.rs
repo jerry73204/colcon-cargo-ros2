@@ -271,9 +271,20 @@ fn check_stock_packages() {
     let goal_info = action_msgs::msg::GoalInfo::default();
     assert_eq!(round_trip(goal_info).stamp.sec, 0);
 
-    let mut multi = example_interfaces::msg::Int32MultiArray::default();
+    // A message whose layout nests a struct holding a sequence of structs.
+    // std_msgs rather than example_interfaces, which carries the same shape but
+    // does not ship in ros:humble-ros-base, and the base tier has to build with
+    // no rosdep.
+    let mut multi = std_msgs::msg::Int32MultiArray::default();
     multi.data = vec![1, 2, 3];
-    assert_eq!(round_trip(multi).data.len(), 3);
+    multi.layout.dim = vec![std_msgs::msg::MultiArrayDimension {
+        label: "rows".to_string(),
+        size: 3,
+        stride: 1,
+    }];
+    let back = round_trip(multi);
+    assert_eq!(back.data.len(), 3);
+    assert_eq!(back.layout.dim[0].label, "rows");
 
     println!("  stock interface packages ok");
 }

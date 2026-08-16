@@ -74,6 +74,12 @@ jobs:
         with:
           python-version: '3.10'
 
+      # test_build.py drives a real cargo build and skips without a toolchain.
+      # Without this it skipped here and ran only in the release workflow, which
+      # is where it failed -- after a tag had been pushed.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Build and install wheel
         uses: PyO3/maturin-action@v1
         with:

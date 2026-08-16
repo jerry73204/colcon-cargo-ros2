@@ -108,7 +108,10 @@ def test_build_and_test_package():
             artifacts = build_base / triple / "debug" if triple else build_base / "debug"
 
             # Make sure the testing files are built
-            assert (artifacts / "deps").is_dir(), f"no deps directory under {artifacts}"
+            assert (artifacts / "deps").is_dir(), (
+                f"no deps directory under {artifacts}; build base holds "
+                f"{sorted(str(p.relative_to(build_base)) for p in build_base.rglob('*'))[:40]}"
+            )
             assert len(os.listdir(artifacts / "deps")) > 0
             # TODO: XML test result generation is not currently implemented
             # result_file_path = build_base / 'cargo_test.xml'

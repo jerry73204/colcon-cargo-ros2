@@ -473,6 +473,46 @@ against a different client library also needs its node code ported.
 
 ---
 
+### `argparse.ArgumentError: argument --cargo-args: conflicting option string`
+
+**Symptoms**: a traceback ending in that line at the start of every
+`colcon build`, after which the build succeeds — but no bindings appear under
+`build/<pkg>/rosidl_cargo/`, and a package that depends on ROS interfaces cannot
+resolve them.
+
+**Cause**: `colcon-ros-cargo` is installed alongside this extension. Both build
+`ament_cargo` packages and both register `--cargo-args`, which argparse rejects
+the second time.
+
+The quieter half matters more. Package identification decides which build task
+runs, and colcon-ros-cargo registers its own at priority 160 against colcon-ros's
+150:
+
+```
+ 160  ament_cargo        colcon_ros_cargo.package_identification.ament_cargo
+ 150  ros                colcon_ros.package_identification.ros
+```
+
+So every Rust package is typed `ament_cargo` rather than `ros.ament_cargo`, and
+colcon dispatches it to `cargo ament-build`. This extension's build task never
+runs, nothing generates bindings, and the build still reports success.
+
+**Solution**: keep one of them.
+
+```bash
+pip uninstall colcon-ros-cargo cargo-ament-build   # use colcon-cargo-ros2
+pip uninstall colcon-cargo-ros2                    # use colcon-ros-cargo
+```
+
+`colcon build` names this itself, from package augmentation — the one place that
+still runs when the other extension has taken the packages.
+
+The two are not layered: colcon-ros-cargo patches to Rust sources that ROS's own
+CMake generator installed under `share/<pkg>/rust`, while this extension
+generates the bindings itself. Neither can stand in for the other.
+
+---
+
 ### Bindings are out of date
 
 **Symptoms**:

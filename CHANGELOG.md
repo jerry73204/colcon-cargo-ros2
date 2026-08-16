@@ -8,6 +8,18 @@ before 1.0, minor versions may break things.
 Entries describe what changed for someone *using* the tool. The reasoning behind
 each change is in the commit that made it and in `docs/phases/`.
 
+## [Unreleased]
+
+### Added
+
+- **`colcon build` says so when `colcon-ros-cargo` is installed alongside it.**
+  Both extensions build `ament_cargo` packages, and colcon-ros-cargo wins the
+  package identification (priority 160 against colcon-ros's 150), so every Rust
+  package goes to `cargo ament-build`, this extension's build task never runs,
+  and no bindings are generated — while the build still reports success. The
+  only other symptom is an `argparse.ArgumentError` about `--cargo-args`, which
+  names neither cause nor cure.
+
 ## [0.5.0] — 2026-08-16
 
 ### Added

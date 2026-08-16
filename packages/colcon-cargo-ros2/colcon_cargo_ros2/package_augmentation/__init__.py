@@ -1,5 +1,6 @@
 # Licensed under the Apache License, Version 2.0
 
+import importlib.util
 from pathlib import Path
 
 from colcon_core.logging import colcon_logger
@@ -7,6 +8,62 @@ from colcon_core.package_augmentation import PackageAugmentationExtensionPoint
 from colcon_core.plugin_system import satisfies_version
 
 logger = colcon_logger.getChild(__name__)
+
+# Augmentation runs once per discovery pass, so the notice needs suppressing.
+_REPORTED_COMPETITION = set()
+
+
+def _competing_extension_installed() -> bool:
+    """Whether colcon-ros-cargo is installed in this interpreter.
+
+    It is the other colcon extension for ``ament_cargo`` packages, and having
+    both installed is not a supported arrangement -- see
+    :func:`_warn_about_competition`.
+    """
+    try:
+        return importlib.util.find_spec("colcon_ros_cargo") is not None
+    except (ImportError, ValueError):
+        # A half-removed distribution can leave find_spec raising. Whatever it
+        # is, it is not something to fail a build over.
+        return False
+
+
+def _warn_about_competition():
+    """Say that another extension has taken the packages this one handles.
+
+    Nothing else will say it. colcon-ros-cargo registers its package
+    identification at priority 160 and colcon-ros registers at 150, so with both
+    installed every ``ament_cargo`` package is typed ``ament_cargo`` rather than
+    ``ros.ament_cargo``, and colcon dispatches it to colcon-ros-cargo's build
+    task. This extension's task never runs, so no bindings are generated -- and
+    the build still reports success, because ``cargo ament-build`` did its part.
+
+    Both extensions also register ``--cargo-args``, which is where the
+    ``argparse.ArgumentError: conflicting option string`` in the build output
+    comes from.
+
+    Package augmentation is the last place with a voice: colcon calls every
+    augmentation extension for every descriptor, whatever its type.
+    """
+    if "colcon-ros-cargo" in _REPORTED_COMPETITION:
+        return
+    _REPORTED_COMPETITION.add("colcon-ros-cargo")
+
+    logger.warning(
+        "colcon-ros-cargo is installed alongside colcon-cargo-ros2. Both build "
+        "ament_cargo packages, and colcon-ros-cargo takes them: its package "
+        "identification runs at priority 160 against colcon-ros's 150, so every "
+        "Rust package is dispatched to `cargo ament-build` and this extension's "
+        "build task never runs.\n"
+        "  No message bindings are generated, and the build still reports "
+        "success -- a package that depends on ROS interfaces then fails to "
+        "resolve them, or silently builds against whatever crates.io has.\n"
+        "  Both extensions also register --cargo-args, which is the "
+        "`argparse.ArgumentError: conflicting option string` above.\n"
+        "  Keep one:\n"
+        "    pip uninstall colcon-ros-cargo cargo-ament-build   # use this extension\n"
+        "    pip uninstall colcon-cargo-ros2                    # use colcon-ros-cargo"
+    )
 
 
 class RustBindingAugmentation(PackageAugmentationExtensionPoint):
@@ -53,6 +110,10 @@ class RustBindingAugmentation(PackageAugmentationExtensionPoint):
         if not cargo_descriptors:
             logger.debug("No Cargo packages found in workspace")
             return
+
+        # Only now: a workspace with no Rust packages is nobody's conflict.
+        if _competing_extension_installed():
+            _warn_about_competition()
 
         logger.info(f"Discovered {len(cargo_descriptors)} Cargo packages via colcon")
 

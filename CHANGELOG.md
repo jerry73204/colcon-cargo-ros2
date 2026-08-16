@@ -8,7 +8,7 @@ before 1.0, minor versions may break things.
 Entries describe what changed for someone *using* the tool. The reasoning behind
 each change is in the commit that made it and in `docs/phases/`.
 
-## [Unreleased]
+## [0.5.1] — 2026-08-16
 
 ### Added
 
@@ -131,7 +131,8 @@ each change is in the commit that made it and in `docs/phases/`.
 
 Releases before 0.4.0 predate this changelog; see the git history.
 
-[Unreleased]: https://github.com/jerry73204/colcon-cargo-ros2/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/jerry73204/colcon-cargo-ros2/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/jerry73204/colcon-cargo-ros2/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/jerry73204/colcon-cargo-ros2/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/jerry73204/colcon-cargo-ros2/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/jerry73204/colcon-cargo-ros2/compare/v0.3.4...v0.4.0

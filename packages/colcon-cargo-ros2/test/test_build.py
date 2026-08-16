@@ -16,7 +16,7 @@ from colcon_core.subprocess import new_event_loop
 from colcon_core.task import TaskContext
 from colcon_ros.package_identification.ros import RosPackageIdentification
 
-from colcon_cargo_ros2.task.ament_cargo.build import AmentCargoBuildTask
+from colcon_cargo_ros2.task.ament_cargo.build import AmentCargoBuildTask, detect_cargo_target
 from colcon_cargo_ros2.task.ament_cargo.test import AmentCargoTestTask
 
 TEST_PACKAGE_NAME = "rust-sample-package"
@@ -98,9 +98,18 @@ def test_build_and_test_package():
             assert not rc
             build_base = Path(task.context.args.build_base)
 
+            # Cargo nests artifacts under the triple when one is in play, and
+            # `$CARGO_BUILD_TARGET` is enough to put one in play -- which is how
+            # this assertion failed on the release workflow and nowhere else:
+            # maturin-action exports that variable, and every later step in the
+            # job inherits it. Ask the same helper the build task asks, so the
+            # test looks where the product would.
+            triple = detect_cargo_target(None)
+            artifacts = build_base / triple / "debug" if triple else build_base / "debug"
+
             # Make sure the testing files are built
-            assert (build_base / "debug" / "deps").is_dir()
-            assert len(os.listdir(build_base / "debug" / "deps")) > 0
+            assert (artifacts / "deps").is_dir(), f"no deps directory under {artifacts}"
+            assert len(os.listdir(artifacts / "deps")) > 0
             # TODO: XML test result generation is not currently implemented
             # result_file_path = build_base / 'cargo_test.xml'
             # assert result_file_path.is_file()

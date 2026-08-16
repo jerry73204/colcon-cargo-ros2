@@ -926,20 +926,20 @@ GitHub Actions workflows:
 
 ## Status
 
-**Version**: v0.4.1
+**Version**: v0.4.1 released; 0.5.0 written up in CHANGELOG.md but not yet bumped or tagged
 **Phases**: 0–3 and 5–10 complete; Phase 4 open on multi-distro support (4.2) and release preparation (4.3)
-**Tests**: 254 Rust, 229 Python, plus 101 assertions across the testing workspaces (interfaces 17, layouts 45, scenarios 39). Zero warnings, clippy `-D warnings` clean
-**Latest**: issues #3–#10 closed — the `rosidl_runtime_rs` version is derived from the workspace, the CLI reaches pip installs, `__version__` is derived, duplicate action constants are covered, the scenario harness runs 4× faster, runtime-only dependencies no longer warn, rpaths survive a moved workspace, and freshness is keyed on file contents
+**Tests**: 261 Rust, 235 Python, plus 105 assertions across the testing workspaces (interfaces 17, layouts 45, scenarios 43). Zero warnings, clippy `-D warnings` clean
+**Latest**: issues #3–#12 closed. Since #10: the serde feature now reaches dependency crates and arrays longer than 32 (found by building iceoryx2's ROS demo); an interface package resolved from a `path` or `git` source is named rather than left to cargo (#11); and CI is green for the first time — the base-tier workspaces job had never run, because `ros:humble-ros-base` carries no pip, and the heavy tier never installed the upstream tier's dependencies. #12 closed as documented: an isolated virtualenv, not the package, is what strips colcon and breaks ROS's generators
 **Testing**: validated with
 - `testing_workspaces/` — interfaces, layouts, scenarios (base tier, no rosdep), plus a heavy tier for test_msgs/nav2_msgs and the upstream ros2-rust examples
 - autoware_carla_bridge (118 packages) ✅
 - cuda_ndt_matcher (16 Autoware + standard packages) ✅
 
-**Known open**: only Humble has been tested; Debian packaging (`stdeb.cfg`) is inert since `setup.py` was removed. The phase checklists were audited on 2026-08-16 — 66 boxes remain open, all of them IDL documentation, deferred Phase 3 polish, or Phase 4's multi-distro and release work.
+**Known open**: only Humble has been tested; Debian packaging (`stdeb.cfg`) is inert since `setup.py` was removed. The phase checklists were audited on 2026-08-16 — 57 boxes remain open, all of them IDL documentation, deferred Phase 3 polish, or Phase 4's multi-distro and release work.
 
 **Versions**:
 - Rust workspace: v0.2.0 (rosidl-parser, rosidl-codegen, rosidl-bindgen, cargo-ros2), edition 2024
-- Python package: v0.4.0 (colcon-cargo-ros2)
+- Python package: v0.4.1 (colcon-cargo-ros2)
 - Target: rclrs 0.7 + rosidl_runtime_rs 0.6
 - Author: Lin Hsiang-Jui <jerry73204@gmail.com>
 

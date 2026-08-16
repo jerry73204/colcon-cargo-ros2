@@ -204,6 +204,34 @@ jobs:
           print('OK: native module loads')
           "
 
+      # The wheel ships no binaries, so these console scripts are the only way an
+      # installed user reaches bindgen/install/clean/doctor. Nothing checked they
+      # land on PATH, which is the failure issue #4 was filed for in the first
+      # place.
+      - name: Verify the console scripts
+        shell: bash
+        run: |
+          colcon-cargo-ros2 --help | tee help.txt
+          for sub in bindgen install clean doctor; do
+            grep -q "$sub" help.txt || { echo "missing subcommand: $sub" >&2; exit 1; }
+          done
+          colcon-cargo-ros2-doctor --help > /dev/null
+          echo "OK: both console scripts run"
+
+      # __version__ is derived rather than duplicated; under a wheel install it
+      # resolves from the distribution metadata. It reported 0.2.0 for several
+      # releases before issue #5, so a release is the moment to check it.
+      - name: Verify the reported version
+        shell: bash
+        run: |
+          python -c "
+          import colcon_cargo_ros2, sys
+          from importlib.metadata import version
+          reported, installed = colcon_cargo_ros2.__version__, version('colcon-cargo-ros2')
+          print('__version__', reported, '| metadata', installed)
+          sys.exit(0 if reported == installed else 1)
+          "
+
   publish:
     name: Publish to PyPI
     runs-on: ubuntu-latest

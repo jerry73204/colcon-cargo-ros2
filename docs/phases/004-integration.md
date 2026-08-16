@@ -1276,9 +1276,9 @@ memory profiling remain unstarted.
   - [ ] Publish rosidl-runtime-rs to crates.io — needs a person; the crates are publishable now that internal path dependencies carry versions
   - [ ] Publish cargo-ros2-bindgen to crates.io
   - [ ] Publish cargo-ros2 to crates.io
-  - [ ] Create GitHub release v0.1.0
-  - [ ] Tag release commit — pushing a `v*` tag triggers the wheel workflow, which publishes to PyPI
-  - [ ] Generate release notes
+  - [ ] Create GitHub release v0.1.0 — no GitHub Release object exists; the tag and the PyPI upload do
+  - [x] Tag release commit — `v0.5.0` on 2026-08-16 published 31 artifacts to PyPI through `wheels.yml`
+  - [x] Generate release notes — `CHANGELOG.md` carries the 0.5.0 section
 
 - [ ] Community announcement
   - [ ] Post on ROS Discourse

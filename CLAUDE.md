@@ -924,12 +924,21 @@ GitHub Actions workflows:
 - **wheels.yml**: Production release (triggered by `v*` tags). Runs full lint/test gate, builds 31 artifacts (30 wheels + sdist) for Linux/macOS/Windows × Python 3.8-3.13, smoke-tests one wheel per platform, then publishes to PyPI via trusted publishing
 - **test-build.yml**: Quick wheel build validation on push to main and PRs
 
+**Verifying a CI change**: run the job in the image it uses rather than pushing
+and waiting. `docker run --rm -v <scratch>:/sp ros:humble-ros-base` with a
+`git archive` of the tree, then apt python3-pip, rustup, a just binary, maturin,
+and `just test-workspaces`. This found both reasons the base tier had never run
+— no pip in the image, and `example_interfaces` missing from it — in one pass,
+and the same recipe with `just test-workspaces-heavy` found the third. The
+images are not the same as a developer machine: a full ROS desktop install
+hides exactly the gaps CI trips on.
+
 ## Status
 
-**Version**: v0.4.1 released; 0.5.0 written up in CHANGELOG.md but not yet bumped or tagged
+**Version**: v0.5.0 bumped and tagged (2026-08-16). Pushing the tag started `wheels.yml` — lint/test gate, 30 wheels plus an sdist, smoke test, then PyPI via trusted publishing. Whether the PyPI side of trusted publishing is configured for the `release` environment was never verifiable from here; if the publish job failed, the artifacts are still on the run and re-running that job after configuring it is enough — no new tag
 **Phases**: 0–3 and 5–10 complete; Phase 4 open on multi-distro support (4.2) and release preparation (4.3)
 **Tests**: 261 Rust, 235 Python, plus 105 assertions across the testing workspaces (interfaces 17, layouts 45, scenarios 43). Zero warnings, clippy `-D warnings` clean
-**Latest**: issues #3–#12 closed. Since #10: the serde feature now reaches dependency crates and arrays longer than 32 (found by building iceoryx2's ROS demo); an interface package resolved from a `path` or `git` source is named rather than left to cargo (#11); and CI is green for the first time — the base-tier workspaces job had never run, because `ros:humble-ros-base` carries no pip, and the heavy tier never installed the upstream tier's dependencies. #12 closed as documented: an isolated virtualenv, not the package, is what strips colcon and breaks ROS's generators
+**Latest**: issues #3–#12 closed, CI green on every job, v0.5.0 tagged. Since #10: the serde feature now reaches dependency crates and arrays longer than 32 (found by building iceoryx2's ROS demo); an interface package resolved from a `path` or `git` source is named rather than left to cargo (#11); and CI is green for the first time — the base-tier workspaces job had never run, because `ros:humble-ros-base` carries no pip, and the heavy tier never installed the upstream tier's dependencies. #12 closed as documented: an isolated virtualenv, not the package, is what strips colcon and breaks ROS's generators
 **Testing**: validated with
 - `testing_workspaces/` — interfaces, layouts, scenarios (base tier, no rosdep), plus a heavy tier for test_msgs/nav2_msgs and the upstream ros2-rust examples
 - autoware_carla_bridge (118 packages) ✅

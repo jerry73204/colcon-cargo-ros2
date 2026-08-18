@@ -8,6 +8,28 @@ before 1.0, minor versions may break things.
 Entries describe what changed for someone *using* the tool. The reasoning behind
 each change is in the commit that made it and in `docs/phases/`.
 
+## [Unreleased]
+
+### Fixed
+
+- **A committed `Cargo.lock` no longer records which ROS installation generated
+  the bindings.** Generated binding crates were stamped with the ROS package's
+  own version, and cargo copies that into every consumer's lock. The version has
+  no effect on resolution — these crates are reached by path through
+  `[patch.crates-io]` — but it made the lock machine-specific, so a workspace
+  that commits one came back dirty after every build elsewhere and two
+  developers could not both keep it clean.
+
+  It is not only a cross-machine problem: on a single machine
+  `/opt/autoware/1.5.0` and `/opt/ros/humble` can both provide
+  `autoware_common_msgs`, at 1.11.0 and 1.3.0 respectively, so the recorded
+  version flipped depending on whether the Autoware underlay had been sourced.
+
+  Generated crates now carry a fixed `0.0.0`, and the ROS package version moves
+  to `[package.metadata.ros] package_version`, where cargo does not propagate
+  it. Existing locks will show the message crates dropping to `0.0.0` once on
+  the next build, and stop changing after that.
+
 ## [0.5.1] — 2026-08-16
 
 ### Added

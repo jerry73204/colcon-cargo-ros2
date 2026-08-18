@@ -97,6 +97,16 @@ struct ActionRsTemplate {
 /// `--rosidl-runtime-rs-version` overrides both.
 pub const ROSIDL_RUNTIME_RS_VERSION: &str = "0.6";
 
+/// Version stamped on every generated binding crate.
+///
+/// Fixed on purpose. The crates are reached through `[patch.crates-io]` path
+/// entries, so cargo never resolves between versions of them — but it does copy
+/// whatever version it finds into the consumer's `Cargo.lock`. Using the ROS
+/// package version there turned that lock into a record of one machine's ROS
+/// installation, so a workspace that commits its lock came back dirty after
+/// every build elsewhere. The ROS version is kept in `[package.metadata.ros]`.
+pub const GENERATED_CRATE_VERSION: &str = "0.0.0";
+
 /// Generated Rust package structure.
 ///
 /// The dual-layer architecture is:
@@ -693,6 +703,23 @@ name = "{}"
 version = "{}"
 edition = "2021"
 
+# The version above is deliberately fixed and is NOT the ROS package version,
+# which is recorded under [package.metadata.ros] instead.
+#
+# These crates are reached through [patch.crates-io] path entries, so cargo
+# never selects between versions here — but it does write whatever it finds
+# into the consumer's Cargo.lock. Stamping the ROS package version made that
+# lock a record of one machine's ROS installation: a workspace with a committed
+# lock came back dirty after every build on any machine whose message packages
+# differed, and two developers could not both keep it clean. Autoware is the
+# case that shows it, where autoware_common_msgs is 1.3.0 in one distribution
+# and 1.11.0 in another.
+#
+# A fixed version makes the lock reproducible across installations. The ROS
+# version is not lost, only moved somewhere cargo does not propagate.
+[package.metadata.ros]
+package_version = "{}"
+
 # Standalone package (not part of parent workspace)
 [workspace]
 
@@ -701,7 +728,7 @@ edition = "2021"
 rosidl_runtime_rs = "{}"
 serde = {{ version = "1.0", features = ["derive"], optional = true }}
 "#,
-        package_name, package_version, version
+        package_name, GENERATED_CRATE_VERSION, package_version, version
     );
 
     // Add serde-big-array if needed for arrays > 32 elements
@@ -1005,7 +1032,8 @@ mod tests {
 
         let cargo_toml = std::fs::read_to_string(temp_dir.path().join("Cargo.toml")).unwrap();
         assert!(cargo_toml.contains("name = \"test_pkg\""));
-        assert!(cargo_toml.contains("version = \"0.1.0\""));
+        assert!(cargo_toml.contains(&format!("version = \"{GENERATED_CRATE_VERSION}\"")));
+        assert!(cargo_toml.contains("package_version = \"0.1.0\""));
         assert!(cargo_toml.contains(&format!(
             "rosidl_runtime_rs = \"{ROSIDL_RUNTIME_RS_VERSION}\""
         )));
@@ -1178,8 +1206,15 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// The ROS package version must not become the crate version.
+    ///
+    /// These crates are patched in by path, so the version never affects
+    /// resolution — but cargo copies it into the consumer's `Cargo.lock`, and a
+    /// version that tracks the installed ROS distribution makes that lock
+    /// machine-specific. A workspace committing its lock then came back dirty
+    /// after every build on a machine whose message packages differed.
     #[test]
-    fn test_generated_cargo_toml_uses_package_version() {
+    fn test_generated_cargo_toml_keeps_ros_version_out_of_the_crate_version() {
         let temp_dir = tempfile::tempdir().unwrap();
         let share_dir = temp_dir.path().join("versioned_msgs");
 
@@ -1208,7 +1243,12 @@ mod tests {
         let cargo_toml_path = output_dir.join("versioned_msgs").join("Cargo.toml");
         let cargo_toml = fs::read_to_string(cargo_toml_path).unwrap();
         assert!(cargo_toml.contains("name = \"versioned_msgs\""));
-        assert!(cargo_toml.contains("version = \"4.5.6\""));
+        // Fixed crate version, so the consumer's lock does not record which ROS
+        // installation generated the bindings.
+        assert!(cargo_toml.contains(&format!("version = \"{GENERATED_CRATE_VERSION}\"")));
+        // The ROS version is kept, somewhere cargo does not propagate.
+        assert!(cargo_toml.contains("[package.metadata.ros]"));
+        assert!(cargo_toml.contains("package_version = \"4.5.6\""));
         // Should NOT contain the hardcoded ROSIDL_RUNTIME_RS_VERSION as the package version
         assert!(!cargo_toml.contains("version = \"0.6.0\""));
         // The rosidl_runtime_rs requirement is the default range, not the
@@ -1238,6 +1278,10 @@ mod tests {
         let cargo_toml_path = output_dir.join("no_version_msgs").join("Cargo.toml");
         let cargo_toml = fs::read_to_string(cargo_toml_path).unwrap();
         assert!(cargo_toml.contains("name = \"no_version_msgs\""));
-        assert!(cargo_toml.contains("version = \"0.0.0\""));
+        assert!(cargo_toml.contains(&format!("version = \"{GENERATED_CRATE_VERSION}\"")));
+        // The crate version is fixed either way, so the fallback has to be
+        // asserted where it is actually visible: the recorded ROS version.
+        assert!(cargo_toml.contains("package_version = \"0.0.0\""));
     }
 }
+

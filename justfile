@@ -61,7 +61,36 @@ install-python:
 
 # Test Python code
 test-python:
-    pytest packages/colcon-cargo-ros2/test/
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Source a ROS underlay when one is not already active. test_binding_scope
+    # resolves real packages through ament_index_python, and without an underlay
+    # those tests skip rather than fail, so a broken dependency walk looks like a
+    # green run.
+    if [[ -z "${AMENT_PREFIX_PATH:-}" ]]; then
+        for setup in /opt/ros/*/setup.bash; do
+            if [[ -f "$setup" ]]; then
+                # ROS's setup scripts read unset variables such as
+                # AMENT_TRACE_SETUP_FILES, so `set -u` has to come off for the
+                # duration of the source or the recipe dies on the underlay
+                # rather than on a test.
+                set +u
+                # shellcheck disable=SC1090
+                source "$setup"
+                set -u
+                break
+            fi
+        done
+    fi
+    if [[ -z "${AMENT_PREFIX_PATH:-}" ]]; then
+        echo "warning: no ROS underlay found; package-resolution tests will skip" >&2
+    fi
+    # ROS ships launch_testing and launch_testing_ros as pytest plugins written
+    # against pytest 7. They are loaded by entry point the moment the underlay is
+    # on PYTHONPATH, and under pytest 8+ they abort the whole run before
+    # collection with a PluginValidationError. Nothing here needs an external
+    # plugin, so refusing autoload is the narrowest fix.
+    PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest packages/colcon-cargo-ros2/test/
 
 # Format Python code
 format-python:

@@ -78,3 +78,13 @@ manifest-path = "Cargo.toml"
 module-name = "colcon_cargo_ros2.cargo_ros2_py"
 python-source = "."
 strip = true
+
+[tool.pytest.ini_options]
+# `linter` is declared here so pytest recognises it rather than warning about an
+# unknown mark. `--strict-markers` turns any future unregistered mark into an
+# error at collection time, which is what catches a typo such as
+# `pytest.mark.lintre` — that would otherwise silently do nothing.
+markers = [
+    "linter: style and lint checks run through an external tool",
+]
+addopts = "--strict-markers"

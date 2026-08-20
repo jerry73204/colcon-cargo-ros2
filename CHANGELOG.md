@@ -8,7 +8,7 @@ before 1.0, minor versions may break things.
 Entries describe what changed for someone *using* the tool. The reasoning behind
 each change is in the commit that made it and in `docs/phases/`.
 
-## [Unreleased]
+## [0.5.2] — 2026-08-20
 
 ### Fixed
 

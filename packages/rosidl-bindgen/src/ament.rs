@@ -216,6 +216,11 @@ impl AmentIndex {
     }
 
     /// Create a new AmentIndex from a path string (colon-separated paths)
+    ///
+    /// Earlier entries win. `AMENT_PREFIX_PATH` is ordered highest-precedence
+    /// first — sourcing an overlay after an underlay *prepends* it — so the
+    /// first prefix providing a package is the one ROS itself resolves to, and
+    /// the one whose C typesupport a node links against.
     pub fn from_path_string(path_string: &str) -> Result<Self> {
         let mut packages = HashMap::new();
 
@@ -252,7 +257,15 @@ impl AmentIndex {
                         if let Ok(package) = Package::from_share_dir(path) {
                             // Only add if it has interface files
                             if package.has_interfaces() {
-                                packages.insert(package.name.clone(), package);
+                                // First prefix wins. Overwriting here would
+                                // generate bindings from a later prefix's .msg
+                                // definitions while the node links the earlier
+                                // prefix's typesupport — the same struct at two
+                                // definitions, which is a silent ABI mismatch
+                                // rather than a visible error.
+                                packages
+                                    .entry(package.name.clone())
+                                    .or_insert(package);
                             }
                         }
                     }
@@ -527,4 +540,49 @@ mod tests {
         assert_eq!(package.version, "3.4.5");
         assert_eq!(package.interfaces.messages.len(), 1);
     }
+
+    /// A package present in two prefixes resolves to the earlier one.
+    ///
+    /// This is what ROS does — `ros2 pkg prefix` returns the first match in
+    /// `AMENT_PREFIX_PATH` — and getting it backwards is not a cosmetic
+    /// difference. Autoware 1.5.0 and ROS Humble both ship
+    /// `autoware_common_msgs`, at 1.11.0 and 1.3.0; taking the later prefix
+    /// generated bindings from Humble's definitions while the node linked
+    /// Autoware's typesupport.
+    #[test]
+    fn earlier_prefix_wins_over_later() {
+        let temp = tempfile::tempdir().unwrap();
+
+        for (prefix, version) in [("overlay", "1.11.0"), ("underlay", "1.3.0")] {
+            let share = temp.path().join(prefix).join("share").join("dup_msgs");
+            std::fs::create_dir_all(share.join("msg")).unwrap();
+            std::fs::write(share.join("msg").join("Thing.msg"), "int32 x\n").unwrap();
+            std::fs::write(
+                share.join("package.xml"),
+                format!(
+                    "<?xml version=\"1.0\"?>\n<package format=\"3\">\n                       <name>dup_msgs</name>\n  <version>{version}</version>\n</package>\n"
+                ),
+            )
+            .unwrap();
+        }
+
+        let path = format!(
+            "{}:{}",
+            temp.path().join("overlay").display(),
+            temp.path().join("underlay").display()
+        );
+        let index = AmentIndex::from_path_string(&path).unwrap();
+        let resolved = index.packages.get("dup_msgs").expect("package found");
+        assert_eq!(resolved.version, "1.11.0", "the earlier prefix must win");
+
+        // And the other way round, so the test cannot pass by luck of ordering.
+        let reversed = format!(
+            "{}:{}",
+            temp.path().join("underlay").display(),
+            temp.path().join("overlay").display()
+        );
+        let index = AmentIndex::from_path_string(&reversed).unwrap();
+        assert_eq!(index.packages.get("dup_msgs").unwrap().version, "1.3.0");
+    }
 }
+

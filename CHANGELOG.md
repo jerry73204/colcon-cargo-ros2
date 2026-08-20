@@ -12,6 +12,19 @@ each change is in the commit that made it and in `docs/phases/`.
 
 ### Fixed
 
+- **A package provided by two prefixes now resolves to the earlier one, as ROS
+  does.** `AMENT_PREFIX_PATH` is ordered highest-precedence first — sourcing an
+  overlay after an underlay prepends it — but the index inserted into a map as
+  it walked, so the *last* prefix won.
+
+  With Autoware 1.5.0 and ROS Humble both providing `autoware_common_msgs`
+  (1.11.0 and 1.3.0), sourcing Humble then Autoware gave
+  `ros2 pkg prefix autoware_common_msgs` = `/opt/autoware/1.5.0` while this tool
+  generated bindings from `/opt/ros/humble`. The node then linked Autoware's
+  typesupport against bindings built from Humble's `.msg` definitions: the same
+  struct at two definitions, which is a silent ABI mismatch rather than a
+  visible error, and only benign while the definitions happen to agree.
+
 - **A committed `Cargo.lock` no longer records which ROS installation generated
   the bindings.** Generated binding crates were stamped with the ROS package's
   own version, and cargo copies that into every consumer's lock. The version has

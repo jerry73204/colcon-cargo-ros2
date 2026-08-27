@@ -1284,4 +1284,3 @@ mod tests {
         assert!(cargo_toml.contains("package_version = \"0.0.0\""));
     }
 }
-

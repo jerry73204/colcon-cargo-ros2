@@ -263,9 +263,7 @@ impl AmentIndex {
                                 // prefix's typesupport — the same struct at two
                                 // definitions, which is a silent ABI mismatch
                                 // rather than a visible error.
-                                packages
-                                    .entry(package.name.clone())
-                                    .or_insert(package);
+                                packages.entry(package.name.clone()).or_insert(package);
                             }
                         }
                     }
@@ -585,4 +583,3 @@ mod tests {
         assert_eq!(index.packages.get("dup_msgs").unwrap().version, "1.3.0");
     }
 }
-

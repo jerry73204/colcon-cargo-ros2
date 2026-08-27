@@ -43,6 +43,14 @@ enum Ros2Command {
         /// Verbose output
         #[arg(long)]
         verbose: bool,
+
+        /// Stamp the crate with the ROS package version instead of a fixed one
+        ///
+        /// Needed when a consumer requires a version of this crate rather than
+        /// `*`: a [patch.crates-io] entry still has to satisfy that
+        /// requirement, and the fixed version cannot.
+        #[arg(long)]
+        use_ros_package_version: bool,
     },
 
     /// Install binaries and libraries to ament layout
@@ -99,6 +107,7 @@ fn main() -> Result<()> {
             output,
             package_path,
             verbose,
+            use_ros_package_version,
         } => {
             let config = BindgenConfig {
                 package_name: package,
@@ -106,6 +115,7 @@ fn main() -> Result<()> {
                 output_dir: output,
                 verbose: verbose || args.verbose,
                 rosidl_runtime_rs_version: None,
+                use_ros_package_version,
             };
             cargo_ros2::generate_bindings(config)?;
             println!("✓ Bindings generated successfully");

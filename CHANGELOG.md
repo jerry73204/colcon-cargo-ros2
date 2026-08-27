@@ -8,6 +8,32 @@ before 1.0, minor versions may break things.
 Entries describe what changed for someone *using* the tool. The reasoning behind
 each change is in the commit that made it and in `docs/phases/`.
 
+## [Unreleased]
+
+### Fixed
+
+- **A package that requires a version of an interface crate builds again.**
+  0.5.2 stamped every generated binding crate `0.0.0` so a committed
+  `Cargo.lock` would stop recording which ROS installation produced it. That
+  held only for consumers writing `std_msgs = "*"`. A `[patch.crates-io]` entry
+  redirects where a crate comes from, but cargo still checks it against the
+  requirement, and `0.0.0` satisfies none:
+
+  ```
+  error: failed to select a version for the requirement `rclrs_example_msgs = "^0.5"`
+  candidate versions found which didn't match: 0.0.0
+  ```
+
+  The version is now decided per package by what the workspace asks for: a crate
+  nothing requires by version keeps the fixed `0.0.0` and its reproducible lock,
+  and a crate something does require carries the ROS package version, so the
+  requirement has one to match. Renamed, platform-table and workspace-inherited
+  requirements all count; `path` and `git` dependencies do not, `[patch.crates-io]`
+  having no say over those.
+
+  `cargo ros2 bindgen` and `colcon-cargo-ros2 bindgen` take
+  `--use-ros-package-version` for the same choice outside a colcon build.
+
 ## [0.5.2] — 2026-08-20
 
 ### Fixed
@@ -42,6 +68,9 @@ each change is in the commit that made it and in `docs/phases/`.
   to `[package.metadata.ros] package_version`, where cargo does not propagate
   it. Existing locks will show the message crates dropping to `0.0.0` once on
   the next build, and stop changing after that.
+
+  Corrected in the next release: the version does affect resolution when a
+  consumer asks for one, and `0.0.0` broke those packages. See *Unreleased*.
 
 ## [0.5.1] — 2026-08-16
 

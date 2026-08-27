@@ -22,6 +22,7 @@
 //!     output_dir: PathBuf::from("target/ros2_bindings"),
 //!     verbose: false,
 //!     rosidl_runtime_rs_version: None,
+//!     use_ros_package_version: false,
 //! };
 //!
 //! generate_bindings(config).expect("Failed to generate bindings");
@@ -51,6 +52,13 @@ pub struct BindgenConfig {
     pub verbose: bool,
     /// Override rosidl_runtime_rs version in generated Cargo.toml (default: "0.6")
     pub rosidl_runtime_rs_version: Option<String>,
+    /// Stamp the crate with the ROS package's version instead of a fixed one.
+    ///
+    /// Set when some package in the workspace requires a particular version of
+    /// this interface crate rather than `*`: a `[patch.crates-io]` entry still
+    /// has to satisfy that requirement, and the fixed version cannot. See
+    /// [`rosidl_bindgen::generator::CrateVersion`].
+    pub use_ros_package_version: bool,
 }
 
 /// Configuration for ament installation
@@ -102,6 +110,7 @@ pub struct InstallConfig {
 ///     output_dir: PathBuf::from("target/ros2_bindings"),
 ///     verbose: true,
 ///     rosidl_runtime_rs_version: None,
+///     use_ros_package_version: false,
 /// };
 ///
 /// generate_bindings(config)?;
@@ -132,6 +141,11 @@ pub fn generate_bindings(config: BindgenConfig) -> Result<()> {
         &package,
         &config.output_dir,
         config.rosidl_runtime_rs_version.as_deref(),
+        if config.use_ros_package_version {
+            generator::CrateVersion::FromRosPackage
+        } else {
+            generator::CrateVersion::Fixed
+        },
     )?;
 
     if config.verbose {

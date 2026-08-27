@@ -8,5 +8,9 @@ name = "nested_node"
 path = "src/main.rs"
 
 [dependencies]
-local_msgs = "*"
+# Required by version, not "*", which decides how the generated crate is
+# stamped: a [patch.crates-io] entry has to satisfy this requirement, and the
+# fixed 0.0.0 that unpinned binding crates carry satisfies nothing. Every other
+# crate here asks for "*", so one build covers both stampings.
+local_msgs = "0.1"
 rosidl_runtime_rs = "0.6"

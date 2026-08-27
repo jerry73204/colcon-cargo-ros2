@@ -81,6 +81,17 @@ assert_contains "$nested_cfg" '../../../../../build/local_msgs' "nested_node pat
 assert_contains "$nested_cfg" "install/local_msgs/lib" "nested_node links against the workspace-local package"
 assert_absent "$standalone_cfg" "install/local_msgs/lib" "standalone_node does not"
 
+section "Generated crates are versioned by what consumers ask for"
+# nested_node asks for local_msgs = "0.1", and a [patch.crates-io] entry has to
+# satisfy that: cargo checks the patched crate against the requirement and
+# reports "candidate versions found which didn't match: 0.0.0" otherwise.
+assert_contains build/local_msgs/rosidl_cargo/local_msgs/Cargo.toml 'version = "0.1.0"' \
+    "a crate a consumer pins carries the ROS package version"
+# Every other crate here asks for "*", and those keep the fixed version, so a
+# committed Cargo.lock does not record which ROS installation generated them.
+assert_contains build/std_msgs/rosidl_cargo/std_msgs/Cargo.toml 'version = "0.0.0"' \
+    "a crate nobody pins keeps the fixed version"
+
 section "A dependency used only at runtime"
 installer_cfg=src/installer_node/.cargo/config.toml
 assert_contains "$installer_cfg" "geometry_msgs = { path" \

@@ -22,18 +22,21 @@ struct BindgenConfig {
     verbose: bool,
     #[pyo3(get, set)]
     rosidl_runtime_rs_version: Option<String>,
+    #[pyo3(get, set)]
+    use_ros_package_version: bool,
 }
 
 #[pymethods]
 impl BindgenConfig {
     #[new]
-    #[pyo3(signature = (package_name, output_dir, package_path=None, verbose=false, rosidl_runtime_rs_version=None))]
+    #[pyo3(signature = (package_name, output_dir, package_path=None, verbose=false, rosidl_runtime_rs_version=None, use_ros_package_version=false))]
     fn new(
         package_name: String,
         output_dir: String,
         package_path: Option<String>,
         verbose: bool,
         rosidl_runtime_rs_version: Option<String>,
+        use_ros_package_version: bool,
     ) -> Self {
         Self {
             package_name,
@@ -41,17 +44,19 @@ impl BindgenConfig {
             output_dir,
             verbose,
             rosidl_runtime_rs_version,
+            use_ros_package_version,
         }
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "BindgenConfig(package_name='{}', output_dir='{}', package_path={:?}, verbose={}, rosidl_runtime_rs_version={:?})",
+            "BindgenConfig(package_name='{}', output_dir='{}', package_path={:?}, verbose={}, rosidl_runtime_rs_version={:?}, use_ros_package_version={})",
             self.package_name,
             self.output_dir,
             self.package_path,
             self.verbose,
-            self.rosidl_runtime_rs_version
+            self.rosidl_runtime_rs_version,
+            self.use_ros_package_version
         )
     }
 }
@@ -152,6 +157,7 @@ fn generate_bindings(config: BindgenConfig) -> PyResult<()> {
         output_dir: PathBuf::from(config.output_dir),
         verbose: config.verbose,
         rosidl_runtime_rs_version: config.rosidl_runtime_rs_version,
+        use_ros_package_version: config.use_ros_package_version,
     };
 
     cargo_ros2::generate_bindings(rust_config)

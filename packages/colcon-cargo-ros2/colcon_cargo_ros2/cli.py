@@ -49,6 +49,15 @@ def _add_bindgen(subparsers):
             "your rclrs pulls in; colcon build derives it from the workspace"
         ),
     )
+    parser.add_argument(
+        "--use-ros-package-version",
+        action="store_true",
+        help=(
+            "stamp the crate with the ROS package's version instead of a fixed "
+            "0.0.0. Needed when a consumer requires a version of it rather than "
+            "`*`, since a [patch.crates-io] entry still has to satisfy that"
+        ),
+    )
     parser.add_argument("--verbose", action="store_true")
     parser.set_defaults(func=_run_bindgen)
 
@@ -60,6 +69,7 @@ def _run_bindgen(args):
         package_path=args.package_path,
         verbose=args.verbose,
         rosidl_runtime_rs_version=args.rosidl_runtime_rs_version,
+        use_ros_package_version=args.use_ros_package_version,
     )
     cargo_ros2_py.generate_bindings(config)
     print(f"✓ Generated bindings for {args.package} in {args.output}")

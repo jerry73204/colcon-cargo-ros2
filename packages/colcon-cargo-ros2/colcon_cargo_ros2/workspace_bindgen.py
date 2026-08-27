@@ -283,6 +283,10 @@ class WorkspaceBindingGenerator:
         # from "the workspace expressed no opinion".
         self._runtime_version = _UNSET
 
+        # Interface packages some package in the workspace asks for by version
+        # rather than `*`. None until worked out; see :meth:`_detect_pinned_packages`.
+        self._pinned_packages: Optional[Set[str]] = None
+
     def try_acquire_lock(self) -> bool:
         """Try to acquire the binding generation lock.
 
@@ -682,6 +686,109 @@ class WorkspaceBindingGenerator:
         return sources
 
     @staticmethod
+    def _cargo_version_requirements(
+        cargo_toml_path: Path, cargo_workspace_root: Optional[Path] = None
+    ) -> Dict[str, str]:
+        """Package name -> the version requirement declared for it, where bounded.
+
+        Follows the same forms as :meth:`_cargo_dependency_names` -- renames,
+        ``[target.<cfg>]`` tables, ``workspace = true`` -- so the key is the
+        package name rather than whatever the manifest calls it.
+
+        Dependencies with their own ``path`` or ``git`` source are left out:
+        ``[patch.crates-io]`` never redirects those, so the generated crate's
+        version cannot matter to them. ``*`` is left out too, being the case the
+        fixed version exists for.
+
+        Args:
+            cargo_toml_path: Manifest to read.
+            cargo_workspace_root: Directory holding the Cargo workspace manifest,
+                needed only to resolve ``workspace = true`` entries.
+        """
+        data = _read_toml(cargo_toml_path)
+        if not data:
+            return {}
+
+        inherited: Dict[str, object] = {}
+        if cargo_workspace_root is not None:
+            root_manifest = cargo_workspace_root / "Cargo.toml"
+            root_data = data if root_manifest == cargo_toml_path else _read_toml(root_manifest)
+            workspace_table = root_data.get("workspace", {})
+            if isinstance(workspace_table, dict):
+                inherited = workspace_table.get("dependencies", {}) or {}
+
+        requirements: Dict[str, str] = {}
+        for table in _dependency_tables(data):
+            for key, spec in table.items():
+                if isinstance(spec, dict) and spec.get("workspace") is True:
+                    parent = inherited.get(key)
+                    spec = parent if isinstance(parent, (str, dict)) else {}
+
+                if isinstance(spec, str):
+                    name, requirement = key, spec
+                elif isinstance(spec, dict):
+                    if spec.get("path") is not None or spec.get("git") is not None:
+                        continue
+                    requirement = spec.get("version")
+                    if not isinstance(requirement, str):
+                        continue
+                    name = spec.get("package", key)
+                else:
+                    continue
+
+                if not _is_unbounded(requirement):
+                    requirements[name] = requirement
+        return requirements
+
+    def _detect_pinned_packages(self) -> Set[str]:
+        """Packages a workspace package requires by version rather than ``*``.
+
+        Only consulted for interface packages, which are the only ones this
+        extension generates a crate for; the rest of the set is harmless.
+
+        Generated crates carry a fixed ``0.0.0`` so that a committed
+        ``Cargo.lock`` stops recording which ROS installation produced them. That
+        only works while every requirement is ``*``: a ``[patch.crates-io]`` entry
+        redirects where a crate comes from, but cargo still checks it against the
+        requirement, and ``0.0.0`` answers none of them::
+
+            error: failed to select a version for the requirement
+                   `rclrs_example_msgs = "^0.5"`
+            candidate versions found which didn't match: 0.0.0
+
+        This project documents ``*``; third-party code written against ``rclrs``
+        pins. Both work if the crates that are pinned -- and only those -- carry
+        the ROS package version instead.
+
+        Resolved once per build.
+        """
+        if self._pinned_packages is not None:
+            return self._pinned_packages
+
+        from colcon_cargo_ros2.package_augmentation import RustBindingAugmentation
+
+        cargo_descriptors = getattr(RustBindingAugmentation, "_cargo_descriptors", {})
+
+        pinned = set()
+        for desc in cargo_descriptors.values():
+            pkg_path = Path(desc.path)
+            cargo_toml_path = pkg_path / "Cargo.toml"
+            if not cargo_toml_path.exists():
+                continue
+            try:
+                requirements = self._cargo_version_requirements(
+                    cargo_toml_path,
+                    self._detect_cargo_workspace_root(pkg_path, self.workspace_root),
+                )
+            except Exception as e:  # a manifest we cannot read pins nothing
+                logger.debug(f"Could not read version requirements from {cargo_toml_path}: {e}")
+                continue
+            pinned.update(requirements)
+
+        self._pinned_packages = pinned
+        return pinned
+
+    @staticmethod
     def _resolves_to(base: Path, source: str, target: Path) -> bool:
         """True when *source*, read from a manifest in *base*, is *target*.
 
@@ -1068,7 +1175,13 @@ class WorkspaceBindingGenerator:
             # Generated structure is: build/<pkg_name>/rosidl_cargo/<pkg_name>/Cargo.toml
             binding_dir = pkg_build_dir / pkg_name
             stamp_file = pkg_build_dir / STAMP_FILENAME
-            stamp = self._interface_stamp(pkg_share, self._detect_runtime_version())
+            # A package that someone requires by version is stamped with the ROS
+            # version rather than the fixed one, so the requirement has something
+            # to match; see :meth:`_detect_pinned_packages`.
+            use_ros_package_version = pkg_name in self._detect_pinned_packages()
+            stamp = self._interface_stamp(
+                pkg_share, self._detect_runtime_version(), use_ros_package_version
+            )
 
             if binding_dir.exists():
                 # A matching stamp beside a crate that lost its Cargo.toml is not
@@ -1086,7 +1199,9 @@ class WorkspaceBindingGenerator:
             # Generate bindings using cargo ros2 bindgen
             logger.info(f"Generating bindings for {pkg_name}")
             try:
-                self._run_bindgen(pkg_name, pkg_share, pkg_build_dir, verbose)
+                self._run_bindgen(
+                    pkg_name, pkg_share, pkg_build_dir, verbose, use_ros_package_version
+                )
                 # Post-process generated Cargo.toml to remove path dependencies
                 # NOTE: This only modifies GENERATED bindings, not user's Cargo.toml
                 self._fixup_generated_cargo_toml(pkg_name, binding_dir)
@@ -1131,16 +1246,30 @@ class WorkspaceBindingGenerator:
         return "".join(f"{line}\n" for line in lines)
 
     @classmethod
-    def _interface_stamp(cls, pkg_share: Path, runtime_version: Optional[str] = None) -> str:
+    def _interface_stamp(
+        cls,
+        pkg_share: Path,
+        runtime_version: Optional[str] = None,
+        use_ros_package_version: bool = False,
+    ) -> str:
         """Digest of a package's interface definitions and how they were generated.
 
         The runtime version is part of it because it lands in the generated
         Cargo.toml: change it without changing a `.msg`, and a digest over the
-        definitions alone would report the stale crates as up to date.
+        definitions alone would report the stale crates as up to date. The crate
+        version lands there for the same reason -- a consumer that changes
+        ``std_msgs = "*"`` to ``std_msgs = "5.3"`` needs the crate regenerated,
+        having touched no interface definition at all.
+
+        Only the ROS-version case contributes, so the stamps of the ``*``
+        workspaces this extension is normally used with are unchanged and their
+        bindings are not regenerated on upgrade.
         """
         digest = hashlib.sha256(cls._interface_records(pkg_share).encode())
         if runtime_version:
             digest.update(f"rosidl_runtime_rs={runtime_version}\n".encode())
+        if use_ros_package_version:
+            digest.update(b"crate_version=ros_package\n")
         return digest.hexdigest()
 
     @classmethod
@@ -1181,7 +1310,14 @@ class WorkspaceBindingGenerator:
             # Not fatal: the only consequence is regenerating next time.
             logger.warning(f"Could not write {stamp_file}: {e}")
 
-    def _run_bindgen(self, pkg_name: str, pkg_share: Path, output_dir: Path, verbose: bool):
+    def _run_bindgen(
+        self,
+        pkg_name: str,
+        pkg_share: Path,
+        output_dir: Path,
+        verbose: bool,
+        use_ros_package_version: bool = False,
+    ):
         """Generate Rust bindings for a single package using direct API call.
 
         Args:
@@ -1189,6 +1325,9 @@ class WorkspaceBindingGenerator:
             pkg_share: Path to the package's share/ directory
             output_dir: Path where bindings should be generated
             verbose: Enable verbose output
+            use_ros_package_version: Stamp the crate with the ROS package's own
+                version instead of the fixed one, for a package some consumer
+                requires by version.
         """
         try:
             # The CLI override if given, else whatever the workspace's own
@@ -1202,6 +1341,7 @@ class WorkspaceBindingGenerator:
                 package_path=str(pkg_share),
                 verbose=verbose,
                 rosidl_runtime_rs_version=version,
+                use_ros_package_version=use_ros_package_version,
             )
 
             # Call Rust function directly (no subprocess!)

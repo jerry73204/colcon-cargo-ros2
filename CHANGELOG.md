@@ -8,7 +8,7 @@ before 1.0, minor versions may break things.
 Entries describe what changed for someone *using* the tool. The reasoning behind
 each change is in the commit that made it and in `docs/phases/`.
 
-## [Unreleased]
+## [0.5.3] — 2026-08-28
 
 ### Fixed
 
@@ -69,8 +69,8 @@ each change is in the commit that made it and in `docs/phases/`.
   it. Existing locks will show the message crates dropping to `0.0.0` once on
   the next build, and stop changing after that.
 
-  Corrected in the next release: the version does affect resolution when a
-  consumer asks for one, and `0.0.0` broke those packages. See *Unreleased*.
+  Corrected in 0.5.3: the version does affect resolution when a consumer asks
+  for one, and `0.0.0` broke those packages.
 
 ## [0.5.1] — 2026-08-16
 

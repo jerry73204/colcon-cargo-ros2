@@ -153,18 +153,46 @@ def _note_once(key: str, message: str):
     logger.info(message)
 
 
-def _read_toml(path: Path) -> Dict:
-    """Parse a TOML file, returning an empty mapping when it cannot be read."""
-    try:
-        try:
-            import tomllib
-        except ImportError:
-            import tomli as tomllib  # type: ignore[no-redef]
+class CargoTomlError(RuntimeError):
+    """A Cargo.toml that could not be read; names the file and why."""
 
+
+def _toml_module():
+    try:
+        import tomllib
+
+        return tomllib
+    except ImportError:
+        pass
+    try:
+        import tomli
+
+        return tomli
+    except ImportError:
+        raise CargoTomlError(
+            "colcon-cargo-ros2 reads Cargo.toml with tomllib (Python 3.11+) or tomli, "
+            f"and this Python ({sys.version.split()[0]}) has neither: "
+            "pip install tomli"
+        ) from None
+
+
+def _read_toml(path: Path) -> Dict:
+    """Parse a TOML file, or raise CargoTomlError naming it and the cause.
+
+    Never an empty mapping in place of a manifest it could not read: taking an
+    unreadable workspace manifest for none treated every member crate as a
+    standalone one, with only its own message patches, and the build failed
+    far from the cause (no tomli on Python 3.10). An absent file is no manifest
+    and reads as an empty one.
+    """
+    if not Path(path).is_file():
+        return {}
+    tomllib = _toml_module()
+    try:
         with open(path, "rb") as f:
             return tomllib.load(f)
-    except Exception:
-        return {}
+    except (OSError, ValueError) as e:
+        raise CargoTomlError(f"cannot read {path}: {e}") from e
 
 
 def _dependency_tables(manifest: Dict):

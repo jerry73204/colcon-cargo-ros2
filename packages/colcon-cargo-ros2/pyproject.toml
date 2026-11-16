@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "colcon-cargo-ros2"
-version = "0.5.3"
+version = "0.5.4"
 description = "Extension for colcon to build Rust ROS 2 packages with automatic binding generation and ament installation"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -46,6 +46,8 @@ dependencies = [
     "colcon-core",
     "colcon-library-path",
     "colcon-ros",
+    # Cargo.toml is read with tomllib, which Python has only from 3.11
+    "tomli>=1.1; python_version < '3.11'",
 ]
 
 [project.urls]

@@ -8,6 +8,26 @@ before 1.0, minor versions may break things.
 Entries describe what changed for someone *using* the tool. The reasoning behind
 each change is in the commit that made it and in `docs/phases/`.
 
+## [0.5.4] — 2026-11-16
+
+### Fixed
+
+- **A Cargo workspace is recognised on Python 3.10 without tomli installed.**
+  Cargo.toml is read with `tomllib`, which Python has only from 3.11, else
+  `tomli`, which the package did not declare. With neither, every manifest read
+  as empty: a workspace's members were each taken for a standalone crate with
+  only its own message patches, and cargo, resolving the whole workspace, failed
+  far from the cause:
+
+  ```
+  error: no matching package named `autoware_adapi_v1_msgs` found
+  ```
+
+  `tomli` is now a dependency on Python before 3.11.
+- **A Cargo.toml that cannot be read is an error that names it**, instead of an
+  empty manifest; so is having no TOML parser at all. An absent manifest still
+  reads as none.
+
 ## [0.5.3] — 2026-08-28
 
 ### Fixed

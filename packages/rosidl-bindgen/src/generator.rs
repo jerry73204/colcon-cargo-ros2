@@ -861,7 +861,12 @@ fn generate_build_rs(output_dir: &Path, package_name: &str) -> Result<()> {
             // Check if this looks like a colcon workspace root
             let install_dir = search_dir.join("install");
             if install_dir.exists() && install_dir.is_dir() {{
-                // Add all package lib directories from install/
+                // `colcon build --merge-install`: one prefix, its libraries in install/lib
+                let merged_lib = install_dir.join("lib");
+                if merged_lib.is_dir() {{
+                    println!("cargo:rustc-link-search=native={{}}", merged_lib.display());
+                }}
+                // The isolated layout (colcon's default): install/<pkg>/lib per package
                 if let Ok(entries) = std::fs::read_dir(&install_dir) {{
                     for entry in entries.flatten() {{
                         let lib_path = entry.path().join("lib");
@@ -1281,6 +1286,53 @@ mod tests {
             output.status.success(),
             "generated build.rs does not compile:\n{}",
             String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// Under `colcon build --merge-install` every package's libraries are in
+    /// `install/lib`, not `install/<pkg>/lib`: the generated build script must put
+    /// that directory on the link search path, or a crate using this workspace's
+    /// interfaces fails with "unable to find library -l<pkg>__rosidl_typesupport_c".
+    #[test]
+    fn test_build_rs_finds_merged_install_lib() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        generate_build_rs(temp_dir.path(), "test_pkg").unwrap();
+        let exe = temp_dir.path().join("build_rs_run");
+        let Ok(output) = std::process::Command::new("rustc")
+            .args(["--edition", "2021", "-o"])
+            .arg(&exe)
+            .arg(temp_dir.path().join("build.rs"))
+            .output()
+        else {
+            return; // no rustc on PATH
+        };
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        // A merged workspace: install/lib holds the libraries, install/share the rest.
+        let ws = temp_dir.path().join("ws");
+        fs::create_dir_all(ws.join("install/lib")).unwrap();
+        fs::create_dir_all(ws.join("install/share/colcon-core/packages")).unwrap();
+        let crate_dir = ws.join("build/test_pkg/rosidl_cargo/test_pkg");
+        fs::create_dir_all(&crate_dir).unwrap();
+
+        let run = std::process::Command::new(&exe)
+            .env("CARGO_MANIFEST_DIR", &crate_dir)
+            .env("COLCON_CARGO_ROS2_SKIP_STAMP_CHECK", "1")
+            .env_remove("AMENT_PREFIX_PATH")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&run.stdout);
+        let expected = format!(
+            "cargo:rustc-link-search=native={}",
+            ws.join("install/lib").display()
+        );
+        assert!(
+            stdout.lines().any(|l| l == expected),
+            "missing `{expected}` in:\n{stdout}"
         );
     }
 

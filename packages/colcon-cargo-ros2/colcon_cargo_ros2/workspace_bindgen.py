@@ -272,10 +272,41 @@ def _cargo_toml_has_workspace(cargo_toml_path: Path) -> bool:
     return "workspace" in _read_toml(cargo_toml_path)
 
 
+def is_merged_install(install_base: Path) -> bool:
+    """True when *install_base* is a ``colcon build --merge-install`` tree.
+
+    A merged install holds colcon's package index at its top
+    (``share/colcon-core/packages``); an isolated one holds it inside each
+    package's own prefix (``<pkg>/share/colcon-core/packages``).
+    """
+    return (Path(install_base) / "share" / "colcon-core" / "packages").is_dir()
+
+
+def install_layout(install_base_arg, package_name: str) -> Tuple[Path, Path, bool]:
+    """(install directory, workspace root, merged) from colcon's per-package install base.
+
+    colcon hands each package ``install/<pkg>`` in the isolated layout but
+    ``install`` itself under ``--merge-install``; taking the parent in both
+    cases put the install directory at the workspace root under
+    ``--merge-install`` (and the workspace root one level above it).
+    """
+    base = Path(os.path.abspath(install_base_arg))
+    merged = base.name != package_name
+    install_dir = base if merged else base.parent
+    return install_dir, install_dir.parent, merged
+
+
 class WorkspaceBindingGenerator:
     """Generates ROS 2 Rust bindings for an entire colcon workspace."""
 
-    def __init__(self, workspace_root: Path, build_base: Path, install_base: Path, args):
+    def __init__(
+        self,
+        workspace_root: Path,
+        build_base: Path,
+        install_base: Path,
+        args,
+        merge_install: Optional[bool] = None,
+    ):
         """Initialize the workspace binding generator.
 
         Args:
@@ -283,11 +314,17 @@ class WorkspaceBindingGenerator:
             build_base: Base directory for build artifacts (workspace/build/)
             install_base: Base directory for installed packages (workspace/install/)
             args: Colcon command line arguments
+            merge_install: True for ``colcon build --merge-install`` (one prefix,
+                ``install/lib``), False for the isolated layout (a prefix per
+                package, ``install/<pkg>/lib``); None to tell from the tree.
         """
         self.workspace_root = workspace_root
         self.build_base = build_base
         self.install_base = install_base
         self.args = args
+        if merge_install is None:
+            merge_install = is_merged_install(install_base)
+        self.merge_install = merge_install
         self.lock_file = build_base / ".colcon" / "bindgen.lock"
         self._lock_fd = None
 
@@ -1804,6 +1841,20 @@ class WorkspaceBindingGenerator:
             selected |= deps
         return selected
 
+    def _workspace_prefixes(self, lib_packages: Optional[Set[str]]) -> List[Path]:
+        """This workspace's install prefixes.
+
+        Isolated (colcon's default): one prefix per package, ``install/<pkg>``,
+        narrowed to *lib_packages* when given. Merged (``--merge-install``): the
+        install directory is the one prefix every package shares, so there is
+        nothing to narrow.
+        """
+        if self.merge_install:
+            return [self.install_base]
+        if lib_packages is None:
+            return [p for p in sorted(self.install_base.iterdir()) if p.is_dir()]
+        return [self.install_base / name for name in sorted(lib_packages)]
+
     def _library_search_dirs(self, lib_packages: Optional[Set[str]]) -> List[Path]:
         """Absolute library directories to put on the linker search path.
 
@@ -1814,11 +1865,7 @@ class WorkspaceBindingGenerator:
         dirs: List[Path] = []
 
         if self.install_base.exists():
-            if lib_packages is None:
-                prefixes = [p for p in sorted(self.install_base.iterdir()) if p.is_dir()]
-            else:
-                prefixes = [self.install_base / name for name in sorted(lib_packages)]
-            for prefix in prefixes:
+            for prefix in self._workspace_prefixes(lib_packages):
                 lib_dir = prefix / "lib"
                 if lib_dir.is_dir() and self._has_library_files(lib_dir):
                     dirs.append(lib_dir.absolute())
@@ -1900,9 +1947,10 @@ class WorkspaceBindingGenerator:
         token = "@loader_path" if sys.platform == "darwin" else "$ORIGIN"
         install_dir = self.install_base.name
 
+        # install/<pkg>/lib/<pkg>/<binary>, or install/lib/<pkg>/<binary> when merged
+        up_to_install = "../.." if self.merge_install else "../../.."
         return [
-            # install/<pkg>/lib/<pkg>/<binary>
-            f"{token}/../../../{relative}",
+            f"{token}/{up_to_install}/{relative}",
             # build/.cargo_target/<slug>/<profile>/<binary>
             f"{token}/../../../../{install_dir}/{relative}",
             # ... with a target triple, one level deeper
@@ -2015,9 +2063,8 @@ class WorkspaceBindingGenerator:
         """
         prefixes: List[str] = []
         if self.install_base.exists():
-            for pkg_install in sorted(self.install_base.iterdir()):
-                if pkg_install.is_dir():
-                    prefixes.append(str(pkg_install.absolute()))
+            for prefix in self._workspace_prefixes(None):
+                prefixes.append(str(prefix.absolute()))
 
         for prefix in os.environ.get("AMENT_PREFIX_PATH", "").split(":"):
             if prefix and prefix not in prefixes:
@@ -2181,6 +2228,7 @@ def generate_workspace_bindings(
     install_base: Path,
     args,
     verbose: bool = False,
+    merge_install: Optional[bool] = None,
 ):
     """Generate bindings for an entire workspace (convenience function).
 
@@ -2190,8 +2238,12 @@ def generate_workspace_bindings(
         install_base: Base directory for installed packages
         args: Colcon command line arguments
         verbose: Enable verbose output
+        merge_install: True for ``--merge-install``, False for the isolated layout,
+            None to tell from the install tree
     """
-    generator = WorkspaceBindingGenerator(workspace_root, build_base, install_base, args)
+    generator = WorkspaceBindingGenerator(
+        workspace_root, build_base, install_base, args, merge_install=merge_install
+    )
 
     # Only generate if we're the first process to acquire the lock.
     # fcntl advisory locking ensures the lock is released automatically

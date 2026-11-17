@@ -13,7 +13,7 @@ from colcon_core.task import TaskExtensionPoint, run
 # Import Rust library directly via PyO3 bindings
 from colcon_cargo_ros2 import cargo_ros2_py
 from colcon_cargo_ros2._version import package_version
-from colcon_cargo_ros2.workspace_bindgen import generate_workspace_bindings
+from colcon_cargo_ros2.workspace_bindgen import generate_workspace_bindings, install_layout
 
 logger = colcon_logger.getChild(__name__)
 
@@ -246,9 +246,11 @@ class AmentCargoBuildTask(TaskExtensionPoint):
 
         # Derive workspace paths from install_base
         args = self.context.args
-        workspace_root = Path(os.path.abspath(os.path.join(args.install_base, "../..")))
+        # (isolated: install/<pkg>; --merge-install: install itself)
+        install_base, workspace_root, merge_install = install_layout(
+            args.install_base, self.context.pkg.name
+        )
         build_base = Path(os.path.abspath(os.path.join(args.build_base, "..")))
-        install_base = Path(args.install_base).parent  # install/ directory
 
         # Store paths for use in build
         self._workspace_root = workspace_root
@@ -259,7 +261,9 @@ class AmentCargoBuildTask(TaskExtensionPoint):
         # All other packages will see the lock and skip generation
         try:
             verbose = getattr(args, "verbose", False)
-            generate_workspace_bindings(workspace_root, build_base, install_base, args, verbose)
+            generate_workspace_bindings(
+                workspace_root, build_base, install_base, args, verbose, merge_install=merge_install
+            )
         except Exception as e:
             logger.error(f"Workspace binding generation failed: {e}")
             import traceback

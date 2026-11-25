@@ -90,6 +90,10 @@ test-python:
     # on PYTHONPATH, and under pytest 8+ they abort the whole run before
     # collection with a PluginValidationError. Nothing here needs an external
     # plugin, so refusing autoload is the narrowest fix.
+    # Test this checkout's colcon_cargo_ros2, not a pip-installed copy, which
+    # would otherwise come first and leave new code untested (pytest before 7
+    # has no `pythonpath` setting, hence the variable).
+    export PYTHONPATH="$PWD/packages/colcon-cargo-ros2${PYTHONPATH:+:$PYTHONPATH}"
     PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest packages/colcon-cargo-ros2/test/
 
 # Format Python code

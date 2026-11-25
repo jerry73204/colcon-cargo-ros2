@@ -295,9 +295,34 @@ The generated `.cargo/config.toml` is what makes this work. It sits at the Cargo
 - The `rosidl_runtime_rs` version generated crates depend on is derived from your packages: whatever they declare, or the version implied by their `rclrs` (0.6 → 0.5, 0.7 → 0.6). It has to match, or cargo ends up with two incompatible copies. `--rosidl-runtime-rs-version` overrides it
 - A Cargo workspace resolves as a unit, so one member's unresolvable dependency fails its siblings
 - User entries in an existing `.cargo/config.toml` are preserved via comment-based markers
+- A Cargo workspace with another one nested below it can keep its patches in `Cargo.toml` instead (`patches-in-manifest`, below)
 - The config is added to `.gitignore` automatically (its paths are machine-specific); opt out with `--no-gitignore`
 - rpath baking can be disabled with `--no-rpath`, after which binaries need a sourced ROS environment to run
 - A `target-dir` you set yourself is left alone
+
+#### Nested Cargo workspaces: patches in `Cargo.toml`
+
+Cargo reads every `.cargo/config.toml` from the directory it runs in up to `/`. A Cargo workspace nested below another one (say a git submodule with its own `[workspace]`, listed in the outer workspace's `exclude`) therefore inherits the outer config's `[patch.crates-io]`, and every cargo run there writes the entries it does not use into its committed `Cargo.lock` as `[[patch.unused]]`. colcon warns when a config target lies below another that carries patches.
+
+A workspace can take its patches in its own `Cargo.toml` instead, where cargo applies them to that workspace only:
+
+```toml
+# Cargo.toml at the outer workspace root
+[workspace.metadata.ros2]
+patches-in-manifest = true
+```
+
+`colcon build` then writes the patches into that `Cargo.toml`, between the same markers, inside your `[patch.crates-io]` table if you have one (a new table otherwise):
+
+```toml
+[patch.crates-io]
+# BEGIN colcon-cargo-ros2 generated patches
+# ...
+std_msgs = { path = ".cargo/ros2-bindings/std_msgs" }
+# END colcon-cargo-ros2
+```
+
+The paths name links under `.cargo/ros2-bindings/`, which each build points at the generated crates and which are git-ignored like the config, so the block is the same on every host and is meant to be committed. Cargo.toml is written only when the block changes, and the build log says so (`+added`/`-removed` crates). That workspace's `.cargo/config.toml` keeps `[build]` and `[env]` but no patches; a nested workspace keeps its own config patches as before. The option is read from `[workspace.metadata.ros2]` only (a workspace root); remove it and the next build takes the block back out. Run `colcon build` once after cloning before using cargo directly, as the links do not exist until then.
 
 When cargo reports something that does not match the above, run:
 
@@ -318,7 +343,7 @@ colcon-cargo-ros2 doctor
 
 ### IDE Support
 
-The same `.cargo/config.toml` makes IDEs (RustRover, rust-analyzer, VS Code) resolve all ROS message dependencies automatically — `cargo metadata` succeeds, so autocomplete, go-to-definition and type checking work without extra configuration.
+The same `.cargo/config.toml` makes IDEs (RustRover, rust-analyzer, VS Code) resolve all ROS message dependencies automatically — `cargo metadata` succeeds, so autocomplete, go-to-definition and type checking work without extra configuration. With `patches-in-manifest`, the patches in `Cargo.toml` serve IDEs the same way.
 
 ### Benefits
 

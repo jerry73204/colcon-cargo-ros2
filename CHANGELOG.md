@@ -8,6 +8,45 @@ before 1.0, minor versions may break things.
 Entries describe what changed for someone *using* the tool. The reasoning behind
 each change is in the commit that made it and in `docs/phases/`.
 
+## [Unreleased]
+
+### Added
+
+- **A Cargo workspace can keep its `[patch.crates-io]` in its own Cargo.toml.**
+  Cargo reads every `.cargo/config.toml` from where it runs up to `/`, so a
+  Cargo workspace nested below another (a git submodule with its own
+  `[workspace]`, excluded by the outer one) inherited the outer config's
+  patches, and every cargo run there, colcon's, a bare one or an IDE's, wrote
+  the ones it does not use into its committed Cargo.lock:
+
+  ```
+  [[patch.unused]]
+  name = "std_msgs"
+  version = "0.0.0"
+  ```
+
+  Opt in at the outer workspace root:
+
+  ```toml
+  [workspace.metadata.ros2]
+  patches-in-manifest = true
+  ```
+
+  The build then writes that workspace's patches into its Cargo.toml, between
+  the usual markers and inside an existing `[patch.crates-io]` table if there
+  is one, as `std_msgs = { path = ".cargo/ros2-bindings/std_msgs" }`: links
+  under `.cargo/` (git-ignored) that each build points at the generated
+  crates, so the block is the same on every host and is committed. Cargo.toml
+  is written only when the block changes, and the log names the crates added
+  and removed. The workspace's `.cargo/config.toml` keeps its `[build]` and
+  `[env]` but no patches; nested workspaces keep their own. Removing the option
+  takes the block back out on the next build. Run `colcon build` once after a
+  fresh clone before using cargo directly: the links do not exist until then.
+
+- **A warning when a Cargo workspace lies below one that carries patches** in
+  its `.cargo/config.toml`, naming both directories, the number of patches it
+  inherits, and the option above with the Cargo.toml to set it in.
+
 ## [0.5.4] — 2026-11-16
 
 ### Fixed
@@ -215,7 +254,10 @@ each change is in the commit that made it and in `docs/phases/`.
 
 Releases before 0.4.0 predate this changelog; see the git history.
 
-[Unreleased]: https://github.com/jerry73204/colcon-cargo-ros2/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/jerry73204/colcon-cargo-ros2/compare/v0.5.4...HEAD
+[0.5.4]: https://github.com/jerry73204/colcon-cargo-ros2/compare/v0.5.3...v0.5.4
+[0.5.3]: https://github.com/jerry73204/colcon-cargo-ros2/compare/v0.5.2...v0.5.3
+[0.5.2]: https://github.com/jerry73204/colcon-cargo-ros2/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/jerry73204/colcon-cargo-ros2/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/jerry73204/colcon-cargo-ros2/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/jerry73204/colcon-cargo-ros2/compare/v0.4.0...v0.4.1

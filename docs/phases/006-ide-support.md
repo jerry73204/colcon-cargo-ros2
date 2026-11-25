@@ -363,6 +363,9 @@ IDE tooling (`cargo metadata`, `cargo check`) doesn't link binaries. Linker flag
 **Why text-based merge, not TOML parse/serialize?**
 TOML serializers reformat the entire file, destroying user formatting, comments, and key ordering. Text-based marker replacement is surgical — it only touches the marked region.
 
+**Why can a workspace take its patches in Cargo.toml (`patches-in-manifest`)?**
+Cargo merges every `.cargo/config.toml` from the working directory up to `/`, so a Cargo workspace nested below another (a git submodule with its own `[workspace]`, excluded by the outer one) inherits the outer config's `[patch.crates-io]`. Entries it does not use are written into its tracked `Cargo.lock` as `[[patch.unused]]` on every cargo run, colcon's, a bare one or an IDE's. A `[patch.crates-io]` in the outer workspace's *manifest* applies to that workspace only (checked with cargo). The manifest is committed, so its paths cannot name the build tree: they name links under the git-ignored `.cargo/ros2-bindings/`, which every build points at the bindings. Opt-in, since it writes a tracked file; without it, a config target that has another one below it gets a warning naming the option. Turning it off takes the block back out (and a `[patch.crates-io]` header the tool added, kept only if entries of the user's follow it), so a stale block cannot linger.
+
 **Why automatic during `colcon build`, not a separate command?**
 Bindings get regenerated each build. The IDE config must stay in sync. A separate command creates a sync problem where users forget to re-run it after dependency changes.
 
